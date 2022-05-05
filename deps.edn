@@ -1,0 +1,36 @@
+{:paths ["src" "resources"]
+
+ :deps
+ {org.clojure/clojure {:mvn/version "1.10.0"}
+  org.clojure/core.async {:mvn/version "1.1.587"}
+  duct/core {:mvn/version "0.7.0"}
+  duct/module.ataraxy {:mvn/version "0.3.0"}
+  duct/module.web {:mvn/version "0.7.0"}
+  duct/module.logging {:mvn/version "0.5.0"}
+
+  cheshire/cheshire {:mvn/version "5.8.1"}
+  clj-http/clj-http {:mvn/version "3.12.3"}
+  io.replikativ/konserve {:mvn/version "0.6.0-alpha3"}
+  tick/tick {:mvn/version "0.4.23-alpha"}
+  aleph/aleph {:mvn/version "0.4.6"}
+  jarohen/chime {:mvn/version "0.3.2"}
+  selmer/selmer {:mvn/version "1.12.27"}
+  borkdude/sci {:mvn/version "0.0.13-alpha.14"}
+  aero/aero {:mvn/version "1.1.6"}
+  nano-id/nano-id {:mvn/version "0.10.0"}
+  ring-cors/ring-cors {:mvn/version "0.1.13"}
+
+  failjure/failjure {:mvn/version "2.2.0"}
+  middlesphere/clj-compress {:mvn/version "0.1.0"}
+  org.clojars.lispyclouds/contajners {:mvn/version "0.0.6"}
+  clj-jgit/clj-jgit {:mvn/version "1.0.1" :exclusions [org.eclipse.jgit/org.eclipse.jgit.gpg.bc]}}
+
+ :aliases {:dev {:extra-deps {integrant/repl {:mvn/version "0.3.1"}
+                              io.github.cognitect-labs/test-runner
+                              {:git/tag "v0.5.0" :git/sha "b3fd0d2"}}
+                 :extra-paths ["dev/src" "test"]}
+           :test {:extra-paths ["test"]
+                  :extra-deps {io.github.cognitect-labs/test-runner
+                               {:git/tag "v0.5.0" :git/sha "b3fd0d2"}}
+                  :main-opts ["-m" "cognitect.test-runner"]
+                  :exec-fn cognitect.test-runner.api/test}}}

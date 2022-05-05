@@ -1,0 +1,39 @@
+{:name "Flow"
+ :description "Flow description"
+
+ :ops
+ [;; clone git repo
+  {:op :nos.git/ensure-repo
+   :id :clone
+   :args [#ref :input/repo
+          #ref :input/path]}
+
+  ;; checkout the right commit
+  {:op :nos.git/checkout
+   :id :checkout
+   :args [#ref :clone
+          #ref :nos/commit-sha]}
+
+  ;; run static analysis
+ {:op :flow
+   :id :group-1
+   :args [;; the flow to run
+          {:ops
+           [{:op :sh
+             :id :yarn
+             :args ["/bin/sh" "-c" [#str "cd " #ref :input " && yarn"] ]}
+
+            {:op :sh
+             :id :lint
+             :args ["/bin/sh" "-c" [#str "cd " #ref :input " && yarn lint"]]}]}
+          ;; the flow input
+          #ref :checkout]}
+
+  ;; build step
+  {:op :nos.docker/build
+   :id :docker-build
+   :args [#ref :checkout
+          [#str #ref :input/name ":" #ref :nos/commit-sha]]
+   :deps [:group-1]}
+
+  ]}
