@@ -19,10 +19,10 @@
       (io/copy f zip)
       (.closeEntry zip))))
 
-; Some functions below are from bob-cd
-;
-; Copyright 2018-2022 Rahul De
-; Source: https://github.com/bob-cd/bob/blob/main/runner/src/runner/engine.clj
+;; Some functions below are from bob-cd
+;;
+;; Copyright 2018-2022 Rahul De
+;; Source: https://github.com/bob-cd/bob/blob/main/runner/src/runner/engine.clj
 (defn sh-tokenize
   "Tokenizes a shell command given as a string into the command and its args.
 
@@ -185,20 +185,30 @@
                  (f/fail msg)))))
 
 (defn do-commands!
-  "Runs an sequence of `commands` starting from `image`"
+  "Runs an sequence of `commands` starting from `image`
+
+  Returns a vector of the results of each command"
   [client commands image work-dir conn]
-  (let [log-file (java.io.File/createTempFile "log" ".txt")]
-    (with-open [w (io/writer log-file)]
-      (loop [cmds commands
-             img image]
-        (let [[cmd & rst] cmds]
-          (if (nil? cmd)
-            [:success (.getAbsolutePath log-file) img]
-            (f/if-let-failed? [result (do-command! client cmd img work-dir #(.write w (str % "\n")) conn)]
-                              (do
-                                (prn image work-dir result)
-                                [:error (.getAbsolutePath log-file) (f/message result)])
-                              (recur rst result))))))))
+  (loop [cmds commands
+         results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
+    (let [[cmd & rst] cmds
+          img (-> results last :img)
+          log-file (java.io.File/createTempFile "log" ".txt")]
+      (if (nil? cmd)
+        [:success results]
+        (f/if-let-failed? [result
+                           (with-open [w (io/writer log-file)]
+                             (do-command! client cmd img work-dir #(.write w (str % "\n")) conn))]
+                          (do
+                            (log/error image work-dir result)
+                            [:error  (concat results [{:error (f/message result)
+                                                       :time (nos/current-time)
+                                                       :cmd cmd
+                                                       :log (.getAbsolutePath log-file)}])])
+                          (recur rst (concat results [{:img result
+                                                       :time (nos/current-time)
+                                                       :cmd cmd
+                                                       :log (.getAbsolutePath log-file)}])))))))
 
 ;; resources = copied from local disk to container before run
 ;; artifacts = copied from container to local disk after run
