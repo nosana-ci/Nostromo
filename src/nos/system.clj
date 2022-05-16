@@ -25,10 +25,12 @@
    (log :info "Starting flow " flow-id)
 
    (let [log-file-name (get-log-filename log-dir flow-id)
+         _ (log :info "Log file name is " log-file-name)
          _ (io/make-parents log-file-name)]
      (with-open [log-file (io/writer log-file-name :append true)]
        (let [flow (<!! (nos/load-flow flow-id (:store fe)))]
          (binding [*out* log-file]
+           (prn "Starting flow " flow-id)
            (as-> flow f
              (if op (assoc-in f [:results op] result) f)
              (nos/run-flow! fe f)
