@@ -54,6 +54,8 @@
 
 (defmethod ig/init-key :nos/flow-chan [_ _] (chan 2000))
 
+(derive :nos/flow-engine :duct/daemon)
+
 (defmethod ig/init-key :nos/flow-engine
   [_ props]
   (let [{:keys [store] :as fe} props]
