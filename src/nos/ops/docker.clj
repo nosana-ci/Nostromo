@@ -8,9 +8,37 @@
    [taoensso.timbre :as log]
    [clj-compress.core :refer [create-archive]])
   (:import [java.io BufferedReader]
-           [java.util.zip ZipEntry ZipOutputStream]))
+           [java.nio ByteBuffer]
+           [org.apache.commons.compress.archivers.tar TarArchiveOutputStream]
+           [org.apache.commons.io FilenameUtils]
+           [org.apache.commons.compress.utils IOUtils]))
 
 (def api-version "v4.0.0")
+
+(defn- relativise-path [base path]
+  (let [f (io/file base)
+        uri (.toURI f)
+        relative (.relativize uri (-> path io/file .toURI))]
+    (.getPath relative)))
+
+(defn create-tar [archive-name input-files]
+  (let [out-stream (io/output-stream archive-name)
+        tar-stream (TarArchiveOutputStream. out-stream)]
+    ;; support filenames > 100 bytes
+    (.setLongFileMode tar-stream TarArchiveOutputStream/LONGFILE_POSIX)
+    (doseq [file-name input-files]
+      (let [file (io/file file-name)]
+        (doseq [f (if (.isDirectory file) (file-seq file) [file])]
+          (when (.isFile f)
+            (let [entry-name (relativise-path (FilenameUtils/getPath file-name) (-> f .getPath))
+                  entry (.createArchiveEntry tar-stream f entry-name)]
+              (.putArchiveEntry tar-stream entry)
+              (when (.isFile f)
+                (IOUtils/copy (io/input-stream f) tar-stream))
+              (.closeArchiveEntry tar-stream))))))
+    (.finish tar-stream)
+    (.close tar-stream)
+    archive-name))
 
 (defn zip-folder [path]
   (with-open [zip (ZipOutputStream. (io/output-stream "foo.zip"))]
@@ -144,11 +172,11 @@
                             err)))
 
 (defn create-tar-archive [arch-name path]
-  (create-archive arch-name [path] "/tmp" "xz"))
+  (create-tar arch-name [path]))
 
 (defn copy-resources-to-container! [client container-id resources]
   (doseq [{:keys [source dest]} resources]
-    (let [temp-archive (create-archive "resource.tar" [source] "/tmp" "xz")]
+    (let [temp-archive (create-tar "resource.tar" [source])]
       (put-container-archive client container-id (io/input-stream temp-archive) dest))))
 
 (defn do-command!
@@ -201,7 +229,7 @@
                              (do-command! client cmd img work-dir #(.write w (str % "\n")) conn))]
                           (do
                             (log/error image work-dir result)
-                            [:error  (concat results [{:error (f/message result)
+                            [:success  (concat results [{:error (f/message result)
                                                        :time (nos/current-time)
                                                        :cmd cmd
                                                        :log (.getAbsolutePath log-file)}])])
@@ -244,5 +272,5 @@
                             [:error (f/message err)])))
 
 (comment
-  (nos/run-op :docker/run nil
-              [{:image "alpine" :cmd ["touch /root/test" "ls /root"] :conn {:uri "http://localhost:8080"}}]))
+  (flow/run-op :docker/run nil
+              [{:image "alpine" :cmd ["touch /root/test" "ls -l /root"] :conn {:uri "http://localhost:8080"}}]))

@@ -59,6 +59,7 @@
 (defmethod ig/init-key :nos/flow-engine
   [_ props]
   (let [{:keys [store] :as fe} props]
+    (println "Starting flow engine loop...")
     (go-loop []
       (when-let [[event & data :as m] (<! (:chan fe))]
         (log :info "Received message " m)
