@@ -40,13 +40,6 @@
     (.close tar-stream)
     archive-name))
 
-(defn zip-folder [path]
-  (with-open [zip (ZipOutputStream. (io/output-stream "foo.zip"))]
-    (doseq [f (file-seq (io/file path)) :when (.isFile f)]
-      (.putNextEntry zip (ZipEntry. (.getPath f)))
-      (io/copy f zip)
-      (.closeEntry zip))))
-
 ;; Some functions below are from bob-cd
 ;;
 ;; Copyright 2018-2022 Rahul De
