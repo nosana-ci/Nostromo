@@ -222,10 +222,10 @@
                              (do-command! client cmd img work-dir #(.write w (str % "\n")) conn))]
                           (do
                             (log/error image work-dir result)
-                            [:success  (concat results [{:error (f/message result)
-                                                       :time (nos/current-time)
-                                                       :cmd cmd
-                                                       :log (.getAbsolutePath log-file)}])])
+                            [:pipeline-failed  (concat results [{:error (f/message result)
+                                                                 :time (nos/current-time)
+                                                                 :cmd cmd
+                                                                 :log (.getAbsolutePath log-file)}])])
                           (recur rst (concat results [{:img result
                                                        :time (nos/current-time)
                                                        :cmd cmd
