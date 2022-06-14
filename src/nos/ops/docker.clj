@@ -8,7 +8,9 @@
    [taoensso.timbre :as log]
    [clj-compress.core :refer [create-archive]])
   (:import [java.io BufferedReader]
-           [java.nio ByteBuffer]
+           [java.nio ByteBuffer CharBuffer]
+           [java.nio.charset Charset StandardCharsets]
+           [java.util Arrays]
            [org.apache.commons.compress.archivers.tar TarArchiveOutputStream]
            [org.apache.commons.io FilenameUtils]
            [org.apache.commons.compress.utils IOUtils]))
@@ -118,7 +120,17 @@
                             (log/errorf "Could not commit image: %s" (f/message err))
                             err)))
 
-(defn stream-log [client id reaction-fn]
+(defn stream-log
+  "Stream logs of container with `id` through `reaction-fn`
+
+  Each line of the docker output is fed to the `reaction-fn`. This function
+  takes 2 arguments: the type of the log line and the string content.
+
+  This also demuxes the docker headers of each line. The header of each log line
+  has the following format:
+
+  := [8]byte{STREAM_TYPE, 0, 0, 0, SIZE1, SIZE2, SIZE3, SIZE4}"
+  [client id reaction-fn]
   (let [log-stream (c/invoke client {:op :ContainerLogsLibpod
                                      :params {:name id
                                               :follow true
@@ -129,11 +141,19 @@
     (future
       (with-open [rdr (io/reader log-stream)]
         (loop [r (BufferedReader. rdr)]
-          (when-let [line (.readLine r)]
-            (-> line
-                (str/replace-first #"^\W+" "")
-                (reaction-fn))
-            (recur r)))))))
+          (let [log-type (.read r)]
+            (when (> log-type -1)
+              (.skip r 3)
+              (let [buf (char-array 4)
+                    _ (.read r buf 0 4)
+                    bts (.getBytes (String. buf) (StandardCharsets/UTF_8))
+                    byte-buf (ByteBuffer/wrap bts)
+                    size (.getInt byte-buf)
+                    line-buf (char-array size)
+                    _ (.read r line-buf 0 size)
+                    line (String. line-buf)]
+                (reaction-fn line log-type))
+              (recur r))))))))
 
 (defn put-container-archive
   "Copies a tar input stream to a path in the container"
@@ -177,8 +197,7 @@
 
   `log-fn` is a function like #(prn \"CNT: \" %)"
   [client cmd image work-dir log-fn conn]
-  (f/try-all [_ (log-fn (str ">> Running " cmd))
-              result (c/invoke client {:op :ContainerCreateLibpod
+  (f/try-all [result (c/invoke client {:op :ContainerCreateLibpod
                                        :data {:image image
                                               :command (sh-tokenize cmd)
                                               :env {}
@@ -219,7 +238,8 @@
         [:success results]
         (f/if-let-failed? [result
                            (with-open [w (io/writer log-file)]
-                             (do-command! client cmd img work-dir #(.write w (str % "\n")) conn))]
+                             (do-command! client cmd img work-dir
+                                          #(.write w (str %2 "," %1 "\n")) conn))]
                           (do
                             (log/error image work-dir result)
                             [:pipeline-failed  (concat results [{:error (f/message result)
