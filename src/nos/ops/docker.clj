@@ -3,6 +3,7 @@
    [nos.core :as nos]
    [failjure.core :as f]
    [clojure.string :as str]
+   [cheshire.core :as json]
    [clojure.java.io :as io]
    [contajners.core :as c]
    [taoensso.timbre :as log]
@@ -236,10 +237,13 @@
           log-file (java.io.File/createTempFile "log" ".txt")]
       (if (nil? cmd)
         [:success results]
-        (f/if-let-failed? [result
+        (f/if-let-failed? [;; this log command will log lines as a nested json array
+                           result
                            (with-open [w (io/writer log-file)]
+                             (.write w "[")
                              (do-command! client cmd img work-dir
-                                          #(.write w (str %2 "," %1 "\n")) conn))]
+                                          #(.write w (str "[" %2 "," (json/encode %1) "],\n")) conn)
+                             (.write w "[1,\"\"]]"))]
                           (do
                             (log/error image work-dir result)
                             [:pipeline-failed  (concat results [{:error (f/message result)
