@@ -242,7 +242,7 @@
                            (with-open [w (io/writer log-file)]
                              (.write w "[")
                              (do-command! client cmd img work-dir
-                                          #(.write w (str "[" %2 "," (json/encode %1) "],\n")) conn)
+                                          #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)
                              (.write w "[1,\"\"]]"))]
                           (do
                             (log/error image work-dir result)
