@@ -10,6 +10,11 @@
   (get-secret [vault id]
     (get vault id)))
 
+(extend-protocol Vault
+  clojure.lang.PersistentHashMap
+  (get-secret [vault id]
+    (get vault id)))
+
 (defmethod ig/init-key :nos/vault
   [_ {path :path profile :profile}]
   (aero/read-config path {:profile profile}))
