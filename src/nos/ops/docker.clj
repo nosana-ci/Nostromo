@@ -223,7 +223,9 @@
                image
                (let [msg (format "Container %s exited with non-zero status %d" container-id status)]
                  (log/debug msg)
-                 (f/fail msg)))))
+                 (f/fail msg)))
+             (f/when-failed [e]
+                            (log/error "error running command"))))
 
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`
@@ -238,19 +240,21 @@
       (if (nil? cmd)
         [:success results]
         (f/if-let-failed? [;; this log command will log lines as a nested json array
-                           result
+                           result-image-id
                            (with-open [w (io/writer log-file)]
                              (.write w "[")
-                             (do-command! client cmd img work-dir
-                                          #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)
-                             (.write w "[1,\"\"]]"))]
+                             (let [result-image-id
+                                   (do-command! client cmd img work-dir
+                                                #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)]
+                               (.write w "[1,\"\"]]")
+                               result-image-id))]
                           (do
-                            (log/error image work-dir result)
-                            [:pipeline-failed  (concat results [{:error (f/message result)
+                            (log/error "ERROR " image work-dir result-image-id)
+                            [:pipeline-failed  (concat results [{:error (f/message result-image-id)
                                                                  :time (nos/current-time)
                                                                  :cmd cmd
                                                                  :log (.getAbsolutePath log-file)}])])
-                          (recur rst (concat results [{:img result
+                          (recur rst (concat results [{:img result-image-id
                                                        :time (nos/current-time)
                                                        :cmd cmd
                                                        :log (.getAbsolutePath log-file)}])))))))
