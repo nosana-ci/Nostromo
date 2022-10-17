@@ -188,14 +188,29 @@
 (defn create-tar-archive [arch-name path]
   (create-tar arch-name [path]))
 
-(defn copy-resources-to-container! [client container-id resources]
-  (doseq [{:keys [source dest]} resources]
-    (let [temp-archive (create-tar "resource.tar" [source])]
+(defn copy-resources-to-container!
+  [client container-id resources]
+  (doseq [{:keys [source dest create-tar] :or {create-tar? false}} resources]
+    (let [temp-archive (if create-tar
+                         (create-tar "resource.tar" [source])
+                         source)]
       (put-container-archive client container-id (io/input-stream temp-archive) dest))))
 
-(defn do-command!
-  "Runs a command in a container from the `image` and returns result image
+(defn copy-artifacts-from-container!
+  [client container-id artifacts]
+  (doseq [{:keys [source dest]} artifacts]
+    (f/try-all [_      (log/debugf "Streaming from container %s on path %s"
+                                   container-id
+                                   source)
+      stream (get-container-archive client container-id source)]
+      (io/copy stream (io/file dest))
+      (f/when-failed [err]
+        (log/errorf "Error in copying container archive: %s" (f/message err))))))
 
+
+(defn do-command!
+  "Runs a command in a container from the `image`.
+  Returns the result image and container-id as a tuple.
   `log-fn` is a function like #(prn \"CNT: \" %)"
   [client cmd image work-dir log-fn conn]
   (f/try-all [result (c/invoke client {:op :ContainerCreateLibpod
@@ -220,7 +235,7 @@
 
               image (commit-container container-id conn)]
              (if (zero? status)
-               image
+               [image container-id]
                (let [msg (format "Container %s exited with non-zero status %d" container-id status)]
                  (log/debug msg)
                  (f/fail msg)))
@@ -232,50 +247,59 @@
 
   Returns a vector of the results of each command"
   [client commands image work-dir conn]
-  (loop [cmds commands
+  (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
-          img (-> results last :img)
-          log-file (java.io.File/createTempFile "log" ".txt")]
+          img         (-> results last :img)
+          log-file    (java.io.File/createTempFile "log" ".txt")]
       (if (nil? cmd)
         [:success results]
         (f/if-let-failed? [;; this log command will log lines as a nested json array
-                           result-image-id
+                           [result-image container-id]
                            (with-open [w (io/writer log-file)]
                              (.write w "[")
-                             (let [result-image-id
+                             (let [[result-image container-id]
                                    (do-command! client cmd img work-dir
                                                 #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)]
                                (.write w "[1,\"\"]]")
-                               result-image-id))]
+                               [result-image container-id]))]
                           (do
-                            (log/error "ERROR " image work-dir result-image-id)
-                            [:pipeline-failed  (concat results [{:error (f/message result-image-id)
-                                                                 :time (nos/current-time)
-                                                                 :cmd cmd
-                                                                 :log (.getAbsolutePath log-file)}])])
-                          (recur rst (concat results [{:img result-image-id
-                                                       :time (nos/current-time)
-                                                       :cmd cmd
-                                                       :log (.getAbsolutePath log-file)}])))))))
+                            (log/error "ERROR " image work-dir result-image)
+                            [:pipeline-failed
+                             (conj results {:error     (f/message result-image)
+                                            :container container-id
+                                            :time      (nos/current-time)
+                                            :cmd       cmd
+                                            :log       (.getAbsolutePath log-file)})])
+                          (recur rst (conj
+                                      results
+                                      {:img       result-image
+                                       :container container-id
+                                       :time      (nos/current-time)
+                                       :cmd       cmd
+                                       :log       (.getAbsolutePath log-file)})))))))
 
 ;; resources = copied from local disk to container before run
 ;; artifacts = copied from container to local disk after run
-(defmethod nos/run-op :docker/run [_ _ [{:keys [image cmd conn artifacts resources work-dir]
-                                         :or {conn {:uri "http://localhost:8080"}
-                                              work-dir "/root"
-                                              resources []
-                                              artifacts []}}]]
+(defmethod nos/run-op
+  :docker/run
+  [_
+   {:keys [id results]}
+   [{:keys [image cmds conn artifacts resources work-dir]
+     :or {conn {:uri "http://localhost:8080"}
+          work-dir "/root"
+          resources []
+          artifacts []}}]]
   (f/try-all [_ (docker-pull conn image)
               _ (log/debugf "Pulled image %s" image)
-              client (c/client {:engine :podman
+              client (c/client {:engine   :podman
                                 :category :libpod/containers
-                                :conn conn
-                                :version api-version})
+                                :conn     conn
+                                :version  api-version})
 
               result (c/invoke client
-                               {:op :ContainerCreateLibpod
-                                :data {:image image}
+                               {:op               :ContainerCreateLibpod
+                                :data             {:image image}
                                 :throw-exceptions true})
 
               container-id (:Id result)
@@ -283,10 +307,18 @@
               _ (when (not-empty resources)
                   (log/debugf "Copying resources to container %s" container-id)
                   (copy-resources-to-container! client container-id resources))
+
               image (commit-container container-id conn)
 
-              last-image (do-commands! client cmd image work-dir conn)]
-             last-image
+              results (do-commands! client cmds image work-dir conn)
+
+              _ (when (not-empty artifacts)
+                  (log/debugf "Copying artifacts to host %s" container-id)
+                  (copy-artifacts-from-container!
+                   client
+                   (-> results second last :container)
+                   artifacts))]
+             results
              (f/when-failed [err]
                             (log/errorf ":docker/run failed" )
                             (prn err)
@@ -294,4 +326,23 @@
 
 (comment
   (flow/run-op :docker/run nil
-              [{:image "alpine" :cmd ["touch /root/test" "ls -l /root"] :conn {:uri "http://localhost:8080"}}]))
+               [{:image     "alpine"
+                 :resources [{:source "/tmp/logs" :dest "/root"}]
+                 :artifacts [{:source "/root" :dest "/tmp/myxy.tar"}]
+                 :cmds      ["touch /root/test" "ls -l /root/tmp"]
+                 :conn      {:uri "http://localhost:8080"}}])
+
+
+  (run-flow
+   (flow/build  {:ops
+                 [{:op   :docker/run
+                   :id   :clone
+                   :args [{
+                           :cmds      ["git clone https://github.com/unraveled/dummy.git" "ls dummy"]
+                           :image     "registry.hub.docker.com/bitnami/git:latest"
+                           :artifacts [{:source "/root/dummy" :dest "/tmp/dummy.tar"}]}]}
+                  {:op   :docker/run
+                   :id   :list
+                   :args [{:cmds      ["ls -l dummy"]
+                           :image     "ubuntu"
+                           :resources [{:source "/tmp/dummy.tar" :dest "/root"}]}]}]})))
