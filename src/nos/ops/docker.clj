@@ -215,9 +215,9 @@
   [client cmd image work-dir log-fn conn]
   (f/try-all [result (c/invoke client {:op :ContainerCreateLibpod
                                        :data {:image image
-                                              :command (sh-tokenize cmd)
+                                              :command (sh-tokenize (:cmd cmd))
                                               :env {}
-                                              :work_dir work-dir
+                                              :work_dir (or (:work-dir cmd) work-dir)
                                               :cgroups_mode "disabled"}
                                        :throw-exceptions true})
               container-id (:Id result)
