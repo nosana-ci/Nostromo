@@ -185,28 +185,49 @@
                             (log/errorf "Error fetching container archive: %s" err)
                             err)))
 
+(defn inspect-container
+  "Returns the container info by id."
+  [id client]
+  (f/try-all [result (c/invoke client
+                               {:op               :ContainerInspectLibpod
+                                :params           {:name id}
+                                :throw-exceptions true})]
+             result
+             (f/when-failed [err]
+                            (log/errorf "Error fetching container info: %s" err)
+                            err)))
+
 (defn create-tar-archive [arch-name path]
   (create-tar arch-name [path]))
 
 (defn copy-resources-to-container!
-  [client container-id resources]
+  [client container-id resources artifact-path]
   (doseq [{:keys [source dest create-tar] :or {create-tar? false}} resources]
-    (let [temp-archive (if create-tar
-                         (create-tar "resource.tar" [source])
-                         source)]
+    (let [source-path  (str artifact-path source)
+          temp-archive (if create-tar
+                         (create-tar "resource.tar" [source-path])
+                         source-path)]
       (put-container-archive client container-id (io/input-stream temp-archive) dest))))
 
 (defn copy-artifacts-from-container!
-  [client container-id artifacts]
+  [client container-id artifacts artifact-path]
   (doseq [{:keys [source dest]} artifacts]
     (f/try-all [_      (log/debugf "Streaming from container %s on path %s"
                                    container-id
                                    source)
-      stream (get-container-archive client container-id source)]
-      (io/copy stream (io/file dest))
+
+                dest-path (str artifact-path dest)
+
+                dir (str (get-in
+                                    (inspect-container container-id client)
+                                    [:Config :WorkingDir])
+                                   "/"
+                                   source)
+
+                stream (get-container-archive client container-id dir)]
+      (io/copy stream (io/file dest-path))
       (f/when-failed [err]
         (log/errorf "Error in copying container archive: %s" (f/message err))))))
-
 
 (defn do-command!
   "Runs a command in a container from the `image`.
@@ -284,12 +305,12 @@
 (defmethod nos/run-op
   :docker/run
   [_
-   {:keys [id results]}
-   [{:keys [image cmds conn artifacts resources work-dir environment]
-     :or {conn {:uri "http://localhost:8080"}
-          work-dir "/root"
-          resources []
-          artifacts []}}]]
+   {flow-id :id}
+   [{:keys [image cmds conn artifacts resources work-dir env]
+     :or   {conn      {:uri "http://localhost:8080"}
+            work-dir  "/root"
+            resources []
+            artifacts []}}]]
   (f/try-all [_ (docker-pull conn image)
               _ (log/debugf "Pulled image %s" image)
               client (c/client {:engine   :podman
@@ -297,17 +318,20 @@
                                 :conn     conn
                                 :version  api-version})
 
+              artifact-path (str "/tmp/nos-artifacts/" flow-id "/")
+              _ (io/make-parents (str artifact-path "ignored.txt"))
+
               result (c/invoke client
                                {:op               :ContainerCreateLibpod
                                 :data             {:image image
-                                                   :env   environment}
+                                                   :env   env}
                                 :throw-exceptions true})
 
               container-id (:Id result)
 
               _ (when (not-empty resources)
                   (log/debugf "Copying resources to container %s" container-id)
-                  (copy-resources-to-container! client container-id resources))
+                  (copy-resources-to-container! client container-id resources artifact-path))
 
               image (commit-container container-id conn)
 
@@ -318,7 +342,9 @@
                   (copy-artifacts-from-container!
                    client
                    (-> results second last :container)
-                   artifacts))]
+                   artifacts
+                   artifact-path))]
+
              results
              (f/when-failed [err]
                             (log/errorf ":docker/run failed" )
@@ -333,17 +359,17 @@
                  :cmds      ["touch /root/test" "ls -l /root/tmp"]
                  :conn      {:uri "http://localhost:8080"}}])
 
-
   (run-flow
    (flow/build  {:ops
                  [{:op   :docker/run
                    :id   :clone
                    :args [{
-                           :cmds      ["git clone https://github.com/unraveled/dummy.git" "ls dummy"]
+                           :cmds      [{:cmd "git clone https://github.com/unraveled/dummy.git"}
+                                       {:cmd "ls dummy"}]
                            :image     "registry.hub.docker.com/bitnami/git:latest"
-                           :artifacts [{:source "/root/dummy" :dest "/tmp/dummy.tar"}]}]}
+                           :artifacts [{:source "dummy" :dest "dummy.tar"}]}]}
                   {:op   :docker/run
                    :id   :list
-                   :args [{:cmds      ["ls -l dummy"]
+                   :args [{:cmds      [{:cmd "ls -l dummy"}]
                            :image     "ubuntu"
-                           :resources [{:source "/tmp/dummy.tar" :dest "/root"}]}]}]})))
+                           :resources [{:source "dummy.tar" :dest "/root"}]}]}]})))
