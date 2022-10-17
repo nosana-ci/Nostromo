@@ -285,7 +285,7 @@
   :docker/run
   [_
    {:keys [id results]}
-   [{:keys [image cmds conn artifacts resources work-dir]
+   [{:keys [image cmds conn artifacts resources work-dir environment]
      :or {conn {:uri "http://localhost:8080"}
           work-dir "/root"
           resources []
@@ -299,7 +299,8 @@
 
               result (c/invoke client
                                {:op               :ContainerCreateLibpod
-                                :data             {:image image}
+                                :data             {:image image
+                                                   :env   environment}
                                 :throw-exceptions true})
 
               container-id (:Id result)
