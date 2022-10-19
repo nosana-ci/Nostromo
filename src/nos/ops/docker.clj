@@ -210,7 +210,7 @@
       (put-container-archive client container-id (io/input-stream temp-archive) dest))))
 
 (defn copy-artifacts-from-container!
-  [client container-id artifacts artifact-path]
+  [client container-id artifacts artifact-path work-dir]
   (doseq [{:keys [source dest]} artifacts]
     (f/try-all [_      (log/debugf "Streaming from container %s on path %s"
                                    container-id
@@ -218,16 +218,13 @@
 
                 dest-path (str artifact-path dest)
 
-                dir (str (get-in
-                                    (inspect-container container-id client)
-                                    [:Config :WorkingDir])
-                                   "/"
-                                   source)
+                dir (str work-dir "/" source)
 
                 stream (get-container-archive client container-id dir)]
       (io/copy stream (io/file dest-path))
       (f/when-failed [err]
-        (log/errorf "Error in copying container archive: %s" (f/message err))))))
+                     (log/errorf "Error in copying container artifact: %s" (f/message err))
+                     err))))
 
 (defn do-command!
   "Runs a command in a container from the `image`.
@@ -261,7 +258,8 @@
                  (log/debug msg)
                  (f/fail msg)))
              (f/when-failed [e]
-                            (log/error "error running command"))))
+                            (log/error "Error running command " e)
+                            e)))
 
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`
@@ -276,26 +274,24 @@
       (if (nil? cmd)
         [:success results]
         (f/if-let-failed? [;; this log command will log lines as a nested json array
-                           [result-image container-id]
+                           command-results
                            (with-open [w (io/writer log-file)]
                              (.write w "[")
-                             (let [[result-image container-id]
+                             (let [result
                                    (do-command! client cmd img work-dir
                                                 #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)]
                                (.write w "[1,\"\"]]")
-                               [result-image container-id]))]
+                               result))]
                           (do
-                            (log/error "ERROR " image work-dir result-image)
                             [:pipeline-failed
-                             (conj results {:error     (f/message result-image)
-                                            :container container-id
+                             (conj results {:error     (f/message command-results)
                                             :time      (nos/current-time)
                                             :cmd       cmd
                                             :log       (.getAbsolutePath log-file)})])
                           (recur rst (conj
                                       results
-                                      {:img       result-image
-                                       :container container-id
+                                      {:img       (first command-results)
+                                       :container (second command-results)
                                        :time      (nos/current-time)
                                        :cmd       cmd
                                        :log       (.getAbsolutePath log-file)})))))))
@@ -343,8 +339,8 @@
                    client
                    (-> results second last :container)
                    artifacts
-                   artifact-path))]
-
+                   artifact-path
+                   work-dir))]
              results
              (f/when-failed [err]
                             (log/errorf ":docker/run failed" )
