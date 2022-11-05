@@ -212,8 +212,7 @@
 (defn copy-artifacts-from-container!
   [client container-id artifacts artifact-path work-dir]
   (doseq [{:keys [source dest]} artifacts]
-    (f/try-all [_      (log/debugf "Streaming from container %s on path %s"
-                                   container-id
+    (f/try-all [_      (log/debugf "Streaming from container on path %s"
                                    source)
 
                 dest-path (str artifact-path dest)
@@ -244,7 +243,7 @@
                                   :params {:name container-id}
                                   :throw-exceptions true})
 
-              _ (log/debugf "Attaching to container %s for logs" container-id)
+              _ (log/debugf "Attaching to container for logs, command: %s" (:cmd cmd))
               _ (stream-log client container-id log-fn)
 
               status (c/invoke client {:op :ContainerWaitLibpod
@@ -283,7 +282,8 @@
                                (.write w "[1,\"\"]]")
                                result))]
                           (do
-                            [:pipeline-failed
+                            [::nos/error
+                             (f/message command-results)
                              (conj results {:error     (f/message command-results)
                                             :time      (nos/current-time)
                                             :cmd       cmd
@@ -326,7 +326,7 @@
               container-id (:Id result)
 
               _ (when (not-empty resources)
-                  (log/debugf "Copying resources to container %s" container-id)
+                  (log/debugf "Copying resources to container" )
                   (copy-resources-to-container! client container-id resources artifact-path))
 
               image (commit-container container-id conn)
@@ -334,7 +334,7 @@
               results (do-commands! client cmds image work-dir conn)
 
               _ (when (not-empty artifacts)
-                  (log/debugf "Copying artifacts to host %s" container-id)
+                  (log/debugf "Copying artifacts to host")
                   (copy-artifacts-from-container!
                    client
                    (-> results second last :container)
@@ -344,8 +344,7 @@
              results
              (f/when-failed [err]
                             (log/errorf ":docker/run failed" )
-                            (prn err)
-                            [:error (f/message err)])))
+                            [::nos/error (f/message err)])))
 
 (comment
   (flow/run-op :docker/run nil

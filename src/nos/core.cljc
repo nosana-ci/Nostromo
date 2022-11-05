@@ -33,8 +33,8 @@
 (s/check-asserts true)
 
 (defn- run-op-dispatch [operator flow args]
-  (log :info "Running operator " operator)
-  operator)
+  (log :info (str "Running operator " (:id operator) " (" (:op operator) ")"))
+  (:op operator))
 
 (defmulti run-op #'run-op-dispatch)
 
@@ -133,8 +133,6 @@
 (defmethod run-op :when [k _ [cond & nodes]]
   (ref-nodes (when cond nodes)))
 
-
-
 (defn load-flow [flow-id store]
   (kv/get-in store [flow-id]))
 
@@ -144,7 +142,6 @@
 (defn read-string [s]
   (edn/read-string {:readers {'ref ref 'vault vault 'dep dep
                               'ref-local ref-local}} s))
-
 
 (defn find-refs [v]
   (->> v (filter ref?) (map ref-key) set))
@@ -169,8 +166,6 @@
   true)
 
 (defn set-input [flow input] (assoc-in flow [:results :input] input))
-
-
 
 (defn resolve-args [args {:keys [results] :as p} vault]
   (ref-val args results vault))
@@ -208,35 +203,33 @@
 (defmethod handle-fx ::rerun [_ op _ flow]
   (update-in flow [:results] dissoc (:id op)))
 
+;; This is the default error handler for Nostromo operators. It will
+;; assosciate the results of the op in the state, reset execution
+;; path, and if `allow-failure?` is false for both the flow and the op
+;; finish the flow.
 (defmethod handle-fx ::error [_ op [_ msg :as res] flow]
-  (log :error "Exception in op " op msg)
-  (-> flow
-      (assoc-in [:results (:id op)] res)
-      (assoc :execution-path [])))
+  (log :error "Exception in op " (:id op) msg)
+  (let [allow-failure? (or (= true (:allow-failure? op))
+                           (and (= true (:allow-failure? flow))
+                                (not (= false (:allow-failure? op)))))]
+    (cond-> flow
+      true                 (assoc-in [:results (:id op)] res)
+      (not allow-failure?) (assoc :status :failed
+                                  :execution-path []))))
 
 (defmethod handle-fx :default [_ op res flow]
   (assoc-in flow [:results (:id op)] res))
 
-
-
-;;(run-graph [[:for (flow/ref :input) [:prn :#i (flow/dep :input)]]] [1 2])
-
 (defn execute-op
-  "Execute an operator `op` in `flow`."
+  "Execute an operator `op` in `flow`.
+  Returns a vector of effects."
   [op args flow]
   (let [res (try
-              (run-op (:op op) flow args)
+              (run-op op flow args)
               (catch Exception e
                 (println "Exception executing operator " e)
                 [::error (ex-message e)]))]
-
-    ;; (as-> flow f
-    ;;   (try
-    ;;     (handle-fx engine op res f)
-    ;;     (catch Exception e
-    ;;       (println "Exception handling fx for operator " e))))
-    res
-    ))
+    res))
 
 (defn do-flow-step
   [op {:keys [results] :or {results []} :as flow} vault]
@@ -252,37 +245,39 @@
         flow
         (execute-op op args flow)))))
 
+(defn finished?
+  "Check if a flows status is in a finished state.
+  Finished states are `:failed` and `:succeeded`"
+  [{:keys [status] :as _flow}]
+  (or (= status :failed) (= status :succeeded)))
+
 (defn run-flow!
-  "Execute pending operators in a `flow`and ex
+  "Execute pending operators in a `flow`and ex.
 
   Ops are executed in order. If an op has any unresolved dependencies or
   argument it is skipped."
   ([{:keys [store vault] :as fe} flow]
-
-   (go
-     ;; TODO: recent flows can now contain duplicate items, this code should
-     ;; probably be moved to the initial triggering event
-     (<! (log-prepend store :recent-flows (:id flow))))
-
-   (let [orig-flow (-> flow
-                       (assoc :execution-path (:ops flow)))]
-     (loop [{:keys [id ops results] [op & path] :execution-path :as ff} orig-flow]
-       (let [f (update ff :execution-path rest)]
-         (cond
-           (nil? op) f
-           (contains? results op) (recur f)
-           :else
-           (let [args (resolve-args (:args op) f vault)
-                 deps (resolve-args (:deps op) f vault)
-                 chkf #(or (future? %) (nil? %))]
-             (if (some chkf (concat args deps))
-               (recur f)          ; if a dep is pending or a future, do not run-op
-               (do
-                 (go (<! (kv/assoc store :active-flow [id (:id op)])))
-                 (let [res (execute-op op args f)
-                       new-flow (handle-fx fe op res f)]
-                   (go
-                     ;; TODO: we're writing to store every step for the demo, not the nicest design
-                     (<! (kv/dissoc store :active-flow))
-                     (<! (kv/assoc store id new-flow)))
-                   (recur new-flow)))))))))))
+   (if (finished? flow)
+     flow
+     (let [orig-flow (-> flow
+                         (assoc :execution-path (:ops flow)))]
+       (loop [{:keys [id ops results] [op & path] :execution-path :as ff} orig-flow]
+         (let [f (update ff :execution-path rest)]
+           (cond
+             (nil? op) f
+             (contains? results (:id op)) (recur f)
+             :else
+             (let [args (resolve-args (:args op) f vault)
+                   deps (resolve-args (:deps op) f vault)
+                   chkf #(or (future? %) (nil? %))]
+               (if (some chkf (concat args deps))
+                 (recur f)          ; if a dep is pending or a future, do not run-op
+                 (do
+                   (go (<! (kv/assoc store :active-flow [id (:id op)])))
+                   (let [res (execute-op op args f)
+                         new-flow (handle-fx fe op res f)]
+                     (go
+                       ;; TODO: we're writing to store every step for the demo, not the nicest design
+                       (<! (kv/dissoc store :active-flow))
+                       (<! (kv/assoc store id new-flow)))
+                     (recur new-flow))))))))))))
