@@ -247,9 +247,11 @@
 
 (defn finished?
   "Check if a flows status is in a finished state.
-  Finished states are `:failed` and `:succeeded`"
-  [{:keys [status] :as _flow}]
-  (or (= status :failed) (= status :succeeded)))
+  Finished states are `:failed` and `:succeeded`, or when every op has
+  a results."
+  [{:keys [status results ops] :as _flow}]
+  (or (= status :failed) (= status :succeeded)
+      (every? results (map :id ops))))
 
 (defn run-flow!
   "Execute pending operators in a `flow`and ex.
