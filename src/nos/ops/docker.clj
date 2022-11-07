@@ -18,6 +18,18 @@
 
 (def api-version "v4.0.0")
 
+(defn get-info
+  "Get the podman system info.
+  Useful for checking connection. The `conn` is of format `{:uri
+  \"http://localhost:8080\"}`"
+  [conn]
+  (c/invoke
+   (c/client {:engine :podman
+              :category :libpod/info
+              :conn conn
+              :version api-version})
+   {:op :SystemInfoLibpod}))
+
 (defn- relativise-path [base path]
   (let [f (io/file base)
         uri (.toURI f)
