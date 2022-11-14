@@ -78,7 +78,6 @@
                  (nos/handle-fx fe op fxs)
                  (kv/assoc store flow-id)
                  <!)))
-
         (recur)))
     fe))
 

@@ -63,7 +63,8 @@
   (and (vector? key) (or (= (first key) ::ref)
                          (= (first key) ::vault)
                          (= (first key) ::dep)
-                         (= (first key) ::str))))
+                         (= (first key) ::str)
+                         (isa? (first key) ::ref))))
 
 (defn vault [key] [::vault key])
 (defn ref-nodes [node] [::nodes node])
