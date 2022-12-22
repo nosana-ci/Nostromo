@@ -47,9 +47,7 @@
 (defn make-future [] [::future (uuid)])
 
 (defn current-time
-  "Return current time in seconds since epoch
-
-  Helper function."
+  "Return current time in seconds since epoch."
   []
   #?(:clj (quot (System/currentTimeMillis) 1000)
      :cljs (quot (.getTime (js/Date.)) 1000)))
@@ -60,11 +58,11 @@
                                         (= (first key) ::dep))))
 
 (defn reflike? [key]
-  (and (vector? key) (or (= (first key) ::ref)
-                         (= (first key) ::vault)
-                         (= (first key) ::dep)
-                         (= (first key) ::str)
-                         (isa? (first key) ::ref))))
+  (and (vector? key) (or (= (first key) :nos/ref)
+                         (= (first key) :nos/vault)
+                         (= (first key) :nos/dep)
+                         (= (first key) :nos/str)
+                         (isa? (first key) :nos/ref))))
 
 (defn vault [key] [::vault key])
 (defn ref-nodes [node] [::nodes node])
@@ -88,50 +86,50 @@
     (if (reflike? r)
       (first r)
       (if (map? r)
-        ::map
+        :nos/map
         (if (coll? r)
-          ::coll
-          ::pass)))))
+          :nos/coll
+          :nos/pass)))))
 
-(defmethod ref-val ::ref [r results _] (get results (second r)))
-(defmethod ref-val ::vault [r _ vault] (vault/get-secret vault (second r)))
-(defmethod ref-val ::dep [_ _ _] ::skip)
+(defmethod ref-val :nos/ref [r results _] (get results (second r)))
+(defmethod ref-val :nos/vault [r _ vault] (vault/get-secret vault (second r)))
+(defmethod ref-val :nos/dep [_ _ _] :nos/skip)
 ;; the ::str inline operator concatenates arguments as strings and is recursive
-(defmethod ref-val ::str [r results vault] (apply str (map #(ref-val % results vault) (rest r))))
-(defmethod ref-val ::pass [r _ _] r)
-(defmethod ref-val ::coll [r res vault] (map #(ref-val % res vault) r))
-(defmethod ref-val ::map [r res vault] (fmap* #(ref-val % res vault) r))
+(defmethod ref-val :nos/str [r results vault] (apply str (map #(ref-val % results vault) (rest r))))
+(defmethod ref-val :nos/pass [r _ _] r)
+(defmethod ref-val :nos/coll [r res vault] (map #(ref-val % res vault) r))
+(defmethod ref-val :nos/map [r res vault] (fmap* #(ref-val % res vault) r))
 
 (defn ref-key [ref] (second ref))
 
 ;; default ops
-(defmethod run-op :get         [_ _ [m k]] (get m k))
-(defmethod run-op :flow-id     [_ {:keys [id]} _] id)
-(defmethod run-op :get-in      [_ _ [m k]] (get-in m k))
-(defmethod run-op :prn         [_ _ [& d]] (apply prn d) d)
-(defmethod run-op :uuid        [_ _ _] (uuid))
-(defmethod run-op :assoc       [_ _ [& pieces]] (apply assoc pieces))
-(defmethod run-op :str         [_ _ [& pieces]] (reduce str pieces))
-(defmethod run-op :slurp       [_ _ [uri]] (slurp uri))
-(defmethod run-op :spit        [_ _ [file uri]] (spit uri file))
-(defmethod run-op :json-decode [_ _ [json]] (json/decode json))
-(defmethod run-op :sleep       [_ _ [duration arg]] (Thread/sleep duration) arg)
-(defmethod run-op :count       [_ _ [coll]] (count coll))
-(defmethod run-op :data        [_ _ [d]]  d)
-(defmethod run-op :concat      [_ _ [a b]] (into [] (concat a b)))
-(defmethod run-op :vec         [_ _ [& e]] (into [] e))
-(defmethod run-op :await       [_ _ [& e]] (make-future))
-(defmethod run-op :fx          [_ _ [& a]] (into [] (concat [::fx-set] a)))
+(defmethod run-op :nos/get         [_ _ [m k]] (get m k))
+(defmethod run-op :nos/flow-id     [_ {:keys [id]} _] id)
+(defmethod run-op :nos/get-in      [_ _ [m k]] (get-in m k))
+(defmethod run-op :nos/prn         [_ _ [& d]] (apply prn d) d)
+(defmethod run-op :nos/uuid        [_ _ _] (uuid))
+(defmethod run-op :nos/assoc       [_ _ [& pieces]] (apply assoc pieces))
+(defmethod run-op :nos/str         [_ _ [& pieces]] (reduce str pieces))
+(defmethod run-op :nos/slurp       [_ _ [uri]] (slurp uri))
+(defmethod run-op :nos/spit        [_ _ [file uri]] (spit uri file))
+(defmethod run-op :nos/json-decode [_ _ [json]] (json/decode json))
+(defmethod run-op :nos/sleep       [_ _ [duration arg]] (Thread/sleep duration) arg)
+(defmethod run-op :nos/count       [_ _ [coll]] (count coll))
+(defmethod run-op :nos/data        [_ _ [d]]  d)
+(defmethod run-op :nos/concat      [_ _ [a b]] (into [] (concat a b)))
+(defmethod run-op :nos/vec         [_ _ [& e]] (into [] e))
+(defmethod run-op :nos/await       [_ _ [& e]] (make-future))
+(defmethod run-op :nos/fx          [_ _ [& a]] (into [] (concat [:nos/fx-set] a)))
 
 #?(:clj
-   (defmethod run-op :download
+   (defmethod run-op :nos/download
      [_ _ [url out-path]] (spit out-path (slurp url)) out-path)
-   (defmethod run-op :file-exist?
+   (defmethod run-op :nos/file-exist?
      [_ _ [file-path]] (.exists (io/as-file file-path)))
-   (defmethod run-op :sh
+   (defmethod run-op :nos/sh
      [_ _ [& args]] (apply clojure.java.shell/sh args)))
 
-(defmethod run-op :when [k _ [cond & nodes]]
+(defmethod run-op :nos/when [k _ [cond & nodes]]
   (ref-nodes (when cond nodes)))
 
 (defn load-flow [flow-id store]
@@ -172,7 +170,7 @@
   (ref-val args results vault))
 
 ;; effects
-(defn fx? [res] (and (coll? res) (isa? (first res) ::fx)))
+(defn fx? [res] (and (coll? res) (isa? (first res) :nos/fx)))
 
 (defn handle-fx-dispatch [flow-engine op fx flow]
   (if (fx? fx)
@@ -181,12 +179,12 @@
 
 (defmulti handle-fx #'handle-fx-dispatch)
 
-(derive ::fx-set ::fx)    ; seq of multiple effects
-(derive ::future ::fx)    ; resolved by a future delivery
-(derive ::nodes ::fx)     ; add new nodes to the graph
-(derive ::rerun ::fx)     ; ignore op result and rerun on next execution
-(derive ::rerun ::fx)     ; ignore op result and rerun on next execution
-(derive ::error ::fx)     ; base error handler
+(derive :nos/fx-set ::fx)    ; seq of multiple effects
+(derive :nos/future ::fx)    ; resolved by a future delivery
+(derive :nos/nodes ::fx)     ; add new nodes to the graph
+(derive :nos/rerun ::fx)     ; ignore op result and rerun on next execution
+(derive :nos/rerun ::fx)     ; ignore op result and rerun on next execution
+(derive :nos/error ::fx)     ; base error handler
 
 (defmethod handle-fx ::fx-set [fe op [_ & fxs] flow]
   (reduce #(handle-fx fe op %2 %1) flow fxs))

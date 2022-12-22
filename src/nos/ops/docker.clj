@@ -214,22 +214,21 @@
 
 (defn copy-resources-to-container!
   [client container-id resources artifact-path]
-  (doseq [{:keys [source dest create-tar] :or {create-tar? false}} resources]
-    (let [source-path  (str artifact-path source)
+  (doseq [{:keys [name path create-tar] :or {create-tar? false}} resources]
+    (let [source-path  (str artifact-path name)
           temp-archive (if create-tar
                          (create-tar "resource.tar" [source-path])
                          source-path)]
-      (put-container-archive client container-id (io/input-stream temp-archive) dest))))
+      (put-container-archive client container-id (io/input-stream temp-archive) path))))
 
 (defn copy-artifacts-from-container!
   [client container-id artifacts artifact-path work-dir]
-  (doseq [{:keys [source dest]} artifacts]
-    (f/try-all [_      (log/debugf "Streaming from container on path %s"
-                                   source)
+  (doseq [{:keys [name path]} artifacts]
+    (f/try-all [_ (log/debugf "Streaming from container on path %s" path)
 
-                dest-path (str artifact-path dest)
+                dest-path (str artifact-path path)
 
-                dir (str work-dir "/" source)
+                dir (str work-dir "/" name)
 
                 stream (get-container-archive client container-id dir)]
       (io/copy stream (io/file dest-path))
@@ -311,7 +310,7 @@
 ;; resources = copied from local disk to container before run
 ;; artifacts = copied from container to local disk after run
 (defmethod nos/run-op
-  :docker/run
+  :container/run
   [_
    {flow-id :id}
    [{:keys [image cmds conn artifacts resources work-dir env]
@@ -359,24 +358,24 @@
                             [::nos/error (f/message err)])))
 
 (comment
-  (flow/run-op :docker/run nil
+  (flow/run-op :container/run nil
                [{:image     "alpine"
-                 :resources [{:source "/tmp/logs" :dest "/root"}]
-                 :artifacts [{:source "/root" :dest "/tmp/myxy.tar"}]
+                 :resources [{:path "/tmp/logs" :name "root"}]
+                 :artifacts [{:name "root" :dest "/tmp"}]
                  :cmds      ["touch /root/test" "ls -l /root/tmp"]
                  :conn      {:uri "http://localhost:8080"}}])
 
   (run-flow
    (flow/build  {:ops
-                 [{:op   :docker/run
+                 [{:op   :container/run
                    :id   :clone
                    :args [{
                            :cmds      [{:cmd "git clone https://github.com/unraveled/dummy.git"}
                                        {:cmd "ls dummy"}]
                            :image     "registry.hub.docker.com/bitnami/git:latest"
-                           :artifacts [{:source "dummy" :dest "dummy.tar"}]}]}
-                  {:op   :docker/run
+                           :artifacts [{:name "dummy.tar" :path "/root"}]}]}
+                  {:op   :container/run
                    :id   :list
                    :args [{:cmds      [{:cmd "ls -l dummy"}]
                            :image     "ubuntu"
-                           :resources [{:source "dummy.tar" :dest "/root"}]}]}]})))
+                           :resources [{:name "dummy.tar" :dest "/root"}]}]}]})))
