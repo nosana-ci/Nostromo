@@ -34,7 +34,7 @@
 
 (defn- run-op-dispatch [operator flow args]
   (log :info (str "Running operator " (:id operator) " (" (:op operator) ")"))
-  (:op operator))
+  (keyword (:op operator)))
 
 (defmulti run-op #'run-op-dispatch)
 
@@ -58,15 +58,16 @@
                                         (= (first key) ::dep))))
 
 (defn reflike? [key]
-  (and (vector? key) (or (= (first key) :nos/ref)
-                         (= (first key) :nos/vault)
-                         (= (first key) :nos/dep)
-                         (= (first key) :nos/str)
-                         (isa? (first key) :nos/ref))))
+  (and (vector? key)
+       (let [v (keyword (first key))]
+         (or (= v :nos/ref)
+             (= v :nos/vault)
+             (= v :nos/dep)
+             (= v :nos/str)
+             (isa? v ::ref)))))
 
 (defn vault [key] [::vault key])
 (defn ref-nodes [node] [::nodes node])
-(defn new-nodes? [key] (and (vector? key) (= (first key) ::nodes)))
 (defn dep [key] [::dep key])
 (defn ref-local [key] [::ref-local key])
 
@@ -81,21 +82,21 @@
         m))
 
 (defmulti ref-val
-  "Resolve the value for an op argument given a flow result set"
-  (fn [r results vault]
+  "Resolves the value for an op argument given a flow result set."
+  (fn [r _state _vault]
     (if (reflike? r)
-      (first r)
+      (keyword (first r))
       (if (map? r)
         :nos/map
         (if (coll? r)
           :nos/coll
           :nos/pass)))))
 
-(defmethod ref-val :nos/ref [r results _] (get results (second r)))
+(defmethod ref-val :nos/ref [r state _] (get state (second r)))
 (defmethod ref-val :nos/vault [r _ vault] (vault/get-secret vault (second r)))
 (defmethod ref-val :nos/dep [_ _ _] :nos/skip)
 ;; the ::str inline operator concatenates arguments as strings and is recursive
-(defmethod ref-val :nos/str [r results vault] (apply str (map #(ref-val % results vault) (rest r))))
+(defmethod ref-val :nos/str [r state vault] (apply str (map #(ref-val % state vault) (rest r))))
 (defmethod ref-val :nos/pass [r _ _] r)
 (defmethod ref-val :nos/coll [r res vault] (map #(ref-val % res vault) r))
 (defmethod ref-val :nos/map [r res vault] (fmap* #(ref-val % res vault) r))
@@ -106,7 +107,7 @@
 (defmethod run-op :nos/get         [_ _ [m k]] (get m k))
 (defmethod run-op :nos/flow-id     [_ {:keys [id]} _] id)
 (defmethod run-op :nos/get-in      [_ _ [m k]] (get-in m k))
-(defmethod run-op :nos/prn         [_ _ [& d]] (apply prn d) d)
+(defmethod run-op :nos/prn         [_ _ [& d]] (apply prn d) (into [] d))
 (defmethod run-op :nos/uuid        [_ _ _] (uuid))
 (defmethod run-op :nos/assoc       [_ _ [& pieces]] (apply assoc pieces))
 (defmethod run-op :nos/str         [_ _ [& pieces]] (reduce str pieces))
@@ -120,6 +121,7 @@
 (defmethod run-op :nos/vec         [_ _ [& e]] (into [] e))
 (defmethod run-op :nos/await       [_ _ [& e]] (make-future))
 (defmethod run-op :nos/fx          [_ _ [& a]] (into [] (concat [:nos/fx-set] a)))
+(defmethod run-op :nos/flow        [_ _ args] (into [] (concat [:nos/flow] args)))
 
 #?(:clj
    (defmethod run-op :nos/download
@@ -150,7 +152,7 @@
   ([uuid program]
    (merge {:id uuid
            :execution-path []
-           :results {}} program)))
+           :state {}} program)))
 
 (defn add-ops [flow nodes]
   (update flow :ops #(into [] (concat % nodes))))
@@ -164,13 +166,13 @@
   (go (>! chan [:deliver future-id data]))
   true)
 
-(defn set-input [flow input] (assoc-in flow [:results :input] input))
+(defn set-input [flow input] (assoc-in flow [:state :input] input))
 
-(defn resolve-args [args {:keys [results] :as p} vault]
-  (ref-val args results vault))
+(defn resolve-args [args {:keys [state] :as p} vault]
+  (ref-val args state vault))
 
 ;; effects
-(defn fx? [res] (and (coll? res) (isa? (first res) :nos/fx)))
+(defn fx? [res] (and (coll? res) (isa? (first res) ::fx)))
 
 (defn handle-fx-dispatch [flow-engine op fx flow]
   (if (fx? fx)
@@ -181,26 +183,30 @@
 
 (derive :nos/fx-set ::fx)    ; seq of multiple effects
 (derive :nos/future ::fx)    ; resolved by a future delivery
-(derive :nos/nodes ::fx)     ; add new nodes to the graph
-(derive :nos/rerun ::fx)     ; ignore op result and rerun on next execution
+(derive :nos/flow ::fx)      ; merge a new flow into the current
 (derive :nos/rerun ::fx)     ; ignore op result and rerun on next execution
 (derive :nos/error ::fx)     ; base error handler
 
-(defmethod handle-fx ::fx-set [fe op [_ & fxs] flow]
+(defmethod handle-fx :nos/fx-set [fe op [_ & fxs] flow]
   (reduce #(handle-fx fe op %2 %1) flow fxs))
 
 ;; register a future in the store
-(defmethod handle-fx ::future [{:keys [store]} op [_ future-id :as res] flow]
+(defmethod handle-fx :nos/future
+  [{:keys [store]} op [_ future-id :as res] flow]
   (log :info "Registering future " res)
   (go (<! (kv/assoc-in store [future-id :deliver] [(:id flow) (:id op)])))
-  (assoc-in flow [:results (:id op)] res))
+  (assoc-in flow [:state (:id op)] res))
 
-(defmethod handle-fx ::nodes [_ op [_ nodes] flow]
-  (-> flow (add-ops nodes)
-      (assoc-in [:results (:id op)] [::new-nodes (count nodes)])))
+(defmethod handle-fx :nos/flow
+  [_ op [_ {:keys [ops]} :as bookie] flow]
+  ;; note: the state of the new flow is currently ignored
+  (-> flow
+      (add-ops ops)
+      (assoc-in [:state (:id op)] [::new-ops (count ops)])
+      (update :execution-path concat ops)))
 
-(defmethod handle-fx ::rerun [_ op _ flow]
-  (update-in flow [:results] dissoc (:id op)))
+(defmethod handle-fx :nos/rerun [_ op _ flow]
+  (update-in flow [:state] dissoc (:id op)))
 
 ;; This is the default error handler for Nostromo operators. It will
 ;; assosciate the results of the op in the state, reset execution
@@ -212,12 +218,12 @@
                            (and (= true (:allow-failure? flow))
                                 (not (= false (:allow-failure? op)))))]
     (cond-> flow
-      true                 (assoc-in [:results (:id op)] res)
+      true                 (assoc-in [:state (:id op)] res)
       (not allow-failure?) (assoc :status :failed
                                   :execution-path []))))
 
 (defmethod handle-fx :default [_ op res flow]
-  (assoc-in flow [:results (:id op)] res))
+  (assoc-in flow [:state (:id op)] res))
 
 (defn execute-op
   "Execute an operator `op` in `flow`.
@@ -231,10 +237,10 @@
     res))
 
 (defn do-flow-step
-  [op {:keys [results] :or {results []} :as flow} vault]
+  [op {:keys [state] :or {state []} :as flow} vault]
   (cond
     (nil? op) flow
-    (contains? results op) flow
+    (contains? state op) flow
     :else
     (let [args (resolve-args (:args op) flow vault)
           deps (resolve-args (:deps op) flow vault)
@@ -248,9 +254,9 @@
   "Check if a flows status is in a finished state.
   Finished states are `:failed` and `:succeeded`, or when every op has
   a results."
-  [{:keys [status results ops] :as _flow}]
+  [{:keys [status state ops] :as _flow}]
   (or (= status :failed) (= status :succeeded)
-      (every? results (map :id ops))))
+      (every? state (map :id ops))))
 
 (defn run-flow!
   "Execute pending operators in a `flow`and ex.
@@ -259,14 +265,13 @@
   argument it is skipped."
   ([{:keys [store vault] :as fe} flow]
    (if (finished? flow)
-     flow
-     (let [orig-flow (-> flow
+     flow     (let [orig-flow (-> flow
                          (assoc :execution-path (:ops flow)))]
-       (loop [{:keys [id ops results] [op & path] :execution-path :as ff} orig-flow]
+       (loop [{:keys [id ops state] [op & path] :execution-path :as ff} orig-flow]
          (let [f (update ff :execution-path rest)]
            (cond
              (nil? op) f
-             (contains? results (:id op)) (recur f)
+             (contains? state (:id op)) (recur f)
              :else
              (let [args (resolve-args (:args op) f vault)
                    deps (resolve-args (:deps op) f vault)
