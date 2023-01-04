@@ -283,29 +283,30 @@
           log-file    (java.io.File/createTempFile "log" ".txt")]
       (if (nil? cmd)
         [:success results]
-        (f/if-let-failed? [;; this log command will log lines as a nested json array
-                           command-results
-                           (with-open [w (io/writer log-file)]
-                             (.write w "[")
-                             (let [result
-                                   (do-command! client cmd img work-dir
-                                                #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)]
-                               (.write w "[1,\"\"]]")
-                               result))]
-                          (do
-                            [::nos/error
-                             (f/message command-results)
-                             (conj results {:error     (f/message command-results)
-                                            :time      (nos/current-time)
-                                            :cmd       cmd
-                                            :log       (.getAbsolutePath log-file)})])
-                          (recur rst (conj
-                                      results
-                                      {:img       (first command-results)
-                                       :container (second command-results)
-                                       :time      (nos/current-time)
-                                       :cmd       cmd
-                                       :log       (.getAbsolutePath log-file)})))))))
+        (f/if-let-failed?
+         [;; this log command will log lines as a nested json array
+          command-results
+          (with-open [w (io/writer log-file)]
+            (.write w "[")
+            (let [result
+                  (do-command! client cmd img work-dir
+                               #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)]
+              (.write w "[1,\"\"]]")
+              result))]
+         (do
+           [::nos/error
+            (f/message command-results)
+            (conj results {:error     (f/message command-results)
+                           :time      (nos/current-time)
+                           :cmd       cmd
+                           :log       (.getAbsolutePath log-file)})])
+         (recur rst (conj
+                     results
+                     {:img       (first command-results)
+                      :container (second command-results)
+                      :time      (nos/current-time)
+                      :cmd       cmd
+                      :log       (.getAbsolutePath log-file)})))))))
 
 ;; resources = copied from local disk to container before run
 ;; artifacts = copied from container to local disk after run

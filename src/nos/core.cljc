@@ -100,6 +100,7 @@
 (defmethod ref-val :nos/pass [r _ _] r)
 (defmethod ref-val :nos/coll [r res vault] (map #(ref-val % res vault) r))
 (defmethod ref-val :nos/map [r res vault] (fmap* #(ref-val % res vault) r))
+(defmethod ref-val :nos/state [r state vault] state)
 
 (defn ref-key [ref] (second ref))
 
@@ -121,7 +122,7 @@
 (defmethod run-op :nos/vec         [_ _ [& e]] (into [] e))
 (defmethod run-op :nos/await       [_ _ [& e]] (make-future))
 (defmethod run-op :nos/fx          [_ _ [& a]] (into [] (concat [:nos/fx-set] a)))
-(defmethod run-op :nos/flow        [_ _ args] (into [] (concat [:nos/flow] args)))
+(defmethod run-op :nos/flow        [_ _ args] (conj [:nos/flow] args))
 
 #?(:clj
    (defmethod run-op :nos/download
@@ -198,7 +199,7 @@
   (assoc-in flow [:state (:id op)] res))
 
 (defmethod handle-fx :nos/flow
-  [_ op [_ {:keys [ops]} :as bookie] flow]
+  [_ op [_ {:keys [ops]}] flow]
   ;; note: the state of the new flow is currently ignored
   (-> flow
       (add-ops ops)
