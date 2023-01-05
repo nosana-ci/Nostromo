@@ -42,7 +42,7 @@
 (defn future? [form] (or
                       (and (vector? form) (= ::future (first form)))
                       (= :await-probe form)))
-(defn error? [form] (and (vector? form) (= ::error (first form))))
+(defn error? [form] (and (vector? form) (= :nos/error (first form))))
 (defn uuid [] (nano-id))
 (defn make-future [] [::future (uuid)])
 
@@ -151,9 +151,10 @@
 (defn build
   ([program] (build (uuid) program))
   ([uuid program]
-   (merge {:id uuid
+   (merge {:id             uuid
            :execution-path []
-           :state {}} program)))
+           :state          {}}
+          program)))
 
 (defn add-ops [flow nodes]
   (update flow :ops #(into [] (concat % nodes))))
@@ -213,7 +214,7 @@
 ;; assosciate the results of the op in the state, reset execution
 ;; path, and if `allow-failure?` is false for both the flow and the op
 ;; finish the flow.
-(defmethod handle-fx ::error [_ op [_ msg :as res] flow]
+(defmethod handle-fx :nos/error [_ op [_ msg :as res] flow]
   (log :error "Exception in op " (:id op) msg)
   (let [allow-failure? (or (= true (:allow-failure? op))
                            (and (= true (:allow-failure? flow))
@@ -234,7 +235,7 @@
               (run-op op flow args)
               (catch Exception e
                 (println "Exception executing operator " e)
-                [::error (ex-message e)]))]
+                [:nos/error (ex-message e)]))]
     res))
 
 (defn do-flow-step

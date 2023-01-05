@@ -234,7 +234,7 @@
       (io/copy stream (io/file dest-path))
       (f/when-failed [err]
                      (log/errorf "Error in copying container artifact: %s" (f/message err))
-                     err))))
+                     (throw err)))))
 
 (defn do-command!
   "Runs a command in a container from the `image`.
@@ -355,8 +355,8 @@
                    work-dir))]
              results
              (f/when-failed [err]
-                            (log/errorf ":docker/run failed" )
-                            [::nos/error (f/message err)])))
+                            (log/errorf ":container/run failed")
+                            [:nos/error (f/message err)])))
 
 (comment
   (flow/run-op :container/run nil
