@@ -42,7 +42,7 @@
 (defn future? [form] (or
                       (and (vector? form) (= ::future (first form)))
                       (= :await-probe form)))
-(defn error? [form] (and (vector? form) (= :nos/error (first form))))
+(defn error? [form] (when (and (vector? form) (= :nos/error (first form))) form))
 (defn uuid [] (nano-id))
 (defn make-future [] [::future (uuid)])
 
@@ -126,7 +126,7 @@
 
 #?(:clj
    (defmethod run-op :nos/download
-     [_ _ [url out-path]] (spit out-path (slurp url)) out-path)
+     [_ _ [{:keys [url path]}]] (spit path (slurp url)) path)
    (defmethod run-op :nos/file-exist?
      [_ _ [file-path]] (.exists (io/as-file file-path)))
    (defmethod run-op :nos/sh
@@ -149,6 +149,7 @@
   (->> v (filter ref?) (map ref-key) set))
 
 (defn build
+  "Fill in missing fields of a partial flow."
   ([program] (build (uuid) program))
   ([uuid program]
    (merge {:id             uuid
@@ -227,65 +228,76 @@
 (defmethod handle-fx :default [_ op res flow]
   (assoc-in flow [:state (:id op)] res))
 
+(defn ex-chain [e]
+  (loop [e e
+         result []]
+    (if (nil? e)
+      result
+      (recur (ex-cause e) (conj result e)))))
+
+(defn ex-print
+  [^Throwable e]
+  (let [indent "  "]
+    (doseq [e (ex-chain e)]
+      (println (-> e class .getCanonicalName))
+      (print indent)
+      (println (ex-message e))
+      (when-let [data (ex-data e)]
+        (print indent)
+        (clojure.pprint/pprint data)))))
+
 (defn execute-op
   "Execute an operator `op` in `flow`.
-  Returns a vector of effects."
-  [op args flow]
-  (let [res (try
+  Returns a vector of effects. If the flow has `:default-args`
+  specified for op, then `args` will be merged into this value."
+  [op args {:keys [default-args] :as flow}]
+  (let [args (if (contains? default-args (keyword (:op op)))
+               (merge (get default-args (keyword (:op op))) args)
+               args)
+
+        res (try
               (run-op op flow args)
               (catch Exception e
                 (println "Exception executing operator " e)
+                (ex-print e)
                 [:nos/error (ex-message e)]))]
     res))
-
-(defn do-flow-step
-  [op {:keys [state] :or {state []} :as flow} vault]
-  (cond
-    (nil? op) flow
-    (contains? state op) flow
-    :else
-    (let [args (resolve-args (:args op) flow vault)
-          deps (resolve-args (:deps op) flow vault)
-          chkf #(or (future? %) (nil? %))]
-      ;; if there are unresolved args or deps we don't do anything
-      (if (or (some chkf (concat args deps)))
-        flow
-        (execute-op op args flow)))))
 
 (defn finished?
   "Check if a flows status is in a finished state.
   Finished states are `:failed` and `:succeeded`, or when every op has
   a results."
   [{:keys [status state ops] :as _flow}]
+
   (or (= status :failed) (= status :succeeded)
       (every? state (map :id ops))))
 
 (defn run-flow!
   "Execute pending operators in a `flow`and ex.
-
-  Ops are executed in order. If an op has any unresolved dependencies or
-  argument it is skipped."
+  Ops are executed in order. If an op has any unresolved dependencies
+  or argument it is skipped."
   ([{:keys [store vault] :as fe} flow]
    (if (finished? flow)
-     flow     (let [orig-flow (-> flow
+     flow
+     (let [orig-flow (-> flow
                          (assoc :execution-path (:ops flow)))]
-       (loop [{:keys [id ops state] [op & path] :execution-path :as ff} orig-flow]
+       (loop [{:keys       [id ops state]
+               [op & path] :execution-path :as ff} orig-flow]
          (let [f (update ff :execution-path rest)]
            (cond
-             (nil? op) f
+             (nil? op)                  f
              (contains? state (:id op)) (recur f)
              :else
-             (let [args (resolve-args (:args op) f vault)
-                   deps (resolve-args (:deps op) f vault)
-                   chkf #(or (future? %) (nil? %))]
-               (if (some chkf (concat args deps))
+             (let [args  (resolve-args (:args op) f vault)
+                   deps  (resolve-args (:deps op) f vault)
+                   chkf  #(or (future? %) (nil? %))
+                   error (or (some error? args) (error? args))]
+               (prn args)
+               (if (or (some chkf (concat args deps))
+                       error)
                  (recur f)          ; if a dep is pending or a future, do not run-op
                  (do
-                   (go (<! (kv/assoc store :active-flow [id (:id op)])))
-                   (let [res (execute-op op args f)
+                   (let [res      (execute-op op args f)
                          new-flow (handle-fx fe op res f)]
-                     (go
-                       ;; TODO: we're writing to store every step for the demo, not the nicest design
-                       (<! (kv/dissoc store :active-flow))
-                       (<! (kv/assoc store id new-flow)))
+                     (go (<! (kv/assoc store id new-flow)))
                      (recur new-flow))))))))))))

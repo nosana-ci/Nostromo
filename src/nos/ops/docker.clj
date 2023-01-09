@@ -222,65 +222,74 @@
       (put-container-archive client container-id (io/input-stream temp-archive) path))))
 
 (defn copy-artifacts-from-container!
-  [client container-id artifacts artifact-path work-dir]
+  [client container-id artifacts artifact-path workdir]
   (doseq [{:keys [name path]} artifacts]
-    (f/try-all [_ (log/debugf "Streaming from container on path %s" path)
-
-                dest-path (str artifact-path path)
-
-                dir (str work-dir "/" name)
-
-                stream (get-container-archive client container-id dir)]
-      (io/copy stream (io/file dest-path))
-      (f/when-failed [err]
-                     (log/errorf "Error in copying container artifact: %s" (f/message err))
-                     (throw err)))))
+    (let [dest-path (str artifact-path "/" name)
+          dir (str workdir "/" path)]
+      (log/debugf "Streaming from container from %s to %s" dir dest-path)
+      (f/try-all
+       [stream (get-container-archive client container-id dir)]
+       (io/copy stream (io/file dest-path))
+       (f/when-failed
+        [err]
+        (throw (ex-info (format "Error in copying artifact %s from %s: %s"
+                                name dir (f/message err)) {})))))))
 
 (defn do-command!
   "Runs a command in a container from the `image`.
   Returns the result image and container-id as a tuple.
   `log-fn` is a function like #(prn \"CNT: \" %)"
-  [client cmd image work-dir log-fn conn]
-  (f/try-all [result (c/invoke client {:op :ContainerCreateLibpod
-                                       :data {:image image
-                                              :command (sh-tokenize (:cmd cmd))
-                                              :env {}
-                                              :work_dir (or (:work-dir cmd) work-dir)
-                                              :cgroups_mode "disabled"}
-                                       :throw-exceptions true})
+  [client cmd image workdir log-fn conn]
+  (f/try-all [result (c/invoke client
+                               {:op   :ContainerCreateLibpod
+                                :data {:image        image
+                                       :command      (sh-tokenize (:cmd cmd))
+                                       :env          {}
+                                       :work_dir     (or (:workdir cmd) workdir)
+                                       :cgroups_mode "disabled"}
+                                :throw-exceptions
+                                true})
               container-id (:Id result)
 
-              _ (c/invoke client {:op :ContainerStartLibpod
-                                  :params {:name container-id}
+              _ (c/invoke client {:op               :ContainerStartLibpod
+                                  :params           {:name container-id}
                                   :throw-exceptions true})
 
-              _ (log/debugf "Attaching to container for logs, command: %s" (:cmd cmd))
+              _ (log/debugf "Attaching to container for logs, command: %s"
+                            (:cmd cmd))
               _ (stream-log client container-id log-fn)
 
-              status (c/invoke client {:op :ContainerWaitLibpod
-                                       :params {:name container-id}
+              status (c/invoke client {:op               :ContainerWaitLibpod
+                                       :params           {:name container-id}
                                        :throw-exceptions true})
 
               image (commit-container container-id conn)]
-             (if (zero? status)
-               [image container-id]
-               (let [msg (format "Container %s exited with non-zero status %d" container-id status)]
-                 (log/debug msg)
-                 (f/fail msg)))
+             (do
+               (when (zero? status)
+                 (let [msg (format "Container %s exited with non-zero status %d"
+                                   container-id status)]
+                   (log/debug msg)
+                   (f/fail msg)))
+               [status image container-id])
              (f/when-failed [e]
                             (log/error "Error running command " e)
                             e)))
 
-(defn do-commands!
-  "Runs an sequence of `commands` starting from `image`
+(defn get-error-message [e]
+  (let [msg  (ex-message e)
+        data (ex-data e)]
+    (str msg ": " (:body data))))
 
-  Returns a vector of the results of each command"
-  [client commands image work-dir conn]
+(defn do-commands!
+  "Runs an sequence of `commands` starting from `image`.
+  Returns a vector of the results of each command."
+  [client commands image workdir inline-logs? conn]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
           img         (-> results last :img)
-          log-file    (java.io.File/createTempFile "log" ".txt")]
+          log-file    (java.io.File/createTempFile "log" ".txt")
+          log-path    (.getAbsolutePath log-file)]
       (if (nil? cmd)
         [:success results]
         (f/if-let-failed?
@@ -289,24 +298,32 @@
           (with-open [w (io/writer log-file)]
             (.write w "[")
             (let [result
-                  (do-command! client cmd img work-dir
+                  (do-command! client cmd img workdir
                                #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)]
               (.write w "[1,\"\"]]")
               result))]
          (do
-           [::nos/error
-            (f/message command-results)
-            (conj results {:error     (f/message command-results)
-                           :time      (nos/current-time)
-                           :cmd       cmd
-                           :log       (.getAbsolutePath log-file)})])
-         (recur rst (conj
-                     results
-                     {:img       (first command-results)
-                      :container (second command-results)
-                      :time      (nos/current-time)
-                      :cmd       cmd
-                      :log       (.getAbsolutePath log-file)})))))))
+           [:nos/error
+            (get-error-message command-results)
+            (conj results {:error (f/message command-results)
+                           :time  (nos/current-time)
+                           :cmd   cmd
+                           :log   (cond-> log-path
+                                    inline-logs? slurp)})])
+         (let [[status image container] command-results
+               new-results
+               (conj
+                results
+                {:img       image
+                 :status    status
+                 :container container
+                 :time      (nos/current-time)
+                 :cmd       cmd
+                 :log       (cond-> log-path
+                              inline-logs? slurp)})]
+           (if (pos? status)
+             [:cmd-error new-results]
+             (recur rst new-results))))))))
 
 ;; resources = copied from local disk to container before run
 ;; artifacts = copied from container to local disk after run
