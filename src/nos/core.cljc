@@ -177,7 +177,11 @@
   [{:keys [args] :as op} {:keys [default-args] :as flow}]
   (let [op-id (keyword (:op op))]
     (if (contains? default-args op-id)
-      (merge (get default-args op-id) args)
+      (try
+        (merge (get default-args op-id) args)
+        (catch Exception e
+          (log :error "Default args could not merged" op)
+          args))
       args)))
 
 (defn resolve-args [args {:keys [state] :as p} vault]
