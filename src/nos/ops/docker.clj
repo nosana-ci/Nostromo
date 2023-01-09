@@ -215,7 +215,7 @@
 (defn copy-resources-to-container!
   [client container-id resources artifact-path]
   (doseq [{:keys [name path create-tar] :or {create-tar? false}} resources]
-    (let [source-path  (str artifact-path name)
+    (let [source-path  (str artifact-path "/" name)
           temp-archive (if create-tar
                          (create-tar "resource.tar" [source-path])
                          source-path)]
@@ -299,7 +299,9 @@
             (.write w "[")
             (let [result
                   (do-command! client cmd img workdir
-                               #(.write w (str "[" %2 "," (json/encode %1) "],")) conn)]
+                               #(.write w (str "[" %2 ","
+                                               (json/encode %1)
+                                               "],")) conn)]
               (.write w "[1,\"\"]]")
               result))]
          (do
@@ -309,7 +311,7 @@
                            :time  (nos/current-time)
                            :cmd   cmd
                            :log   (cond-> log-path
-                                    inline-logs? slurp)})])
+                                    inline-logs? (-> slurp json/decode))})])
          (let [[status image container] command-results
                new-results
                (conj
@@ -320,7 +322,7 @@
                  :time      (nos/current-time)
                  :cmd       cmd
                  :log       (cond-> log-path
-                              inline-logs? slurp)})]
+                              inline-logs? (-> slurp json/decode))})]
            (if (pos? status)
              [:cmd-error new-results]
              (recur rst new-results))))))))
