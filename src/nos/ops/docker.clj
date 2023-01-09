@@ -331,11 +331,12 @@
   :container/run
   [_
    {flow-id :id}
-   [{:keys [image cmds conn artifacts resources work-dir env]
-     :or   {conn      {:uri "http://localhost:8080"}
-            work-dir  "/root"
-            resources []
-            artifacts []}}]]
+   {:keys [image cmds conn artifacts resources workdir env inline-logs?]
+    :or   {conn         {:uri "http://localhost:8080"}
+           workdir      "/root"
+           resources    []
+           artifacts    []
+           inline-logs? false}}]
   (f/try-all [_ (docker-pull conn image)
               _ (log/debugf "Pulled image %s" image)
               client (c/client {:engine   :podman
@@ -343,7 +344,7 @@
                                 :conn     conn
                                 :version  api-version})
 
-              artifact-path (str "/tmp/nos-artifacts/" flow-id "/")
+              artifact-path (str "/tmp/nos-artifacts/" flow-id)
               _ (io/make-parents (str artifact-path "ignored.txt"))
 
               result (c/invoke client
@@ -360,7 +361,7 @@
 
               image (commit-container container-id conn)
 
-              results (do-commands! client cmds image work-dir conn)
+              results (do-commands! client cmds image workdir inline-logs? conn)
 
               _ (when (not-empty artifacts)
                   (log/debugf "Copying artifacts to host")
@@ -369,11 +370,11 @@
                    (-> results second last :container)
                    artifacts
                    artifact-path
-                   work-dir))]
+                   workdir))]
              results
              (f/when-failed [err]
-                            (log/errorf ":container/run failed")
-                            [:nos/error (f/message err)])))
+                            (log/errorf ":container/run failed %s" err)
+                            [:nos/error (get-error-message err) []])))
 
 (comment
   (flow/run-op :container/run nil

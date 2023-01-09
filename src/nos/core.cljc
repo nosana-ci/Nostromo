@@ -171,6 +171,15 @@
 
 (defn set-input [flow input] (assoc-in flow [:state :input] input))
 
+(defn fill-default-args
+  "If the flow has `:default-args` specified for op, then `args` will be
+  merged into this value."
+  [{:keys [args] :as op} {:keys [default-args] :as flow}]
+  (let [op-id (keyword (:op op))]
+    (if (contains? default-args op-id)
+      (merge (get default-args op-id) args)
+      args)))
+
 (defn resolve-args [args {:keys [state] :as p} vault]
   (ref-val args state vault))
 
@@ -248,27 +257,20 @@
 
 (defn execute-op
   "Execute an operator `op` in `flow`.
-  Returns a vector of effects. If the flow has `:default-args`
-  specified for op, then `args` will be merged into this value."
-  [op args {:keys [default-args] :as flow}]
-  (let [args (if (contains? default-args (keyword (:op op)))
-               (merge (get default-args (keyword (:op op))) args)
-               args)
-
-        res (try
-              (run-op op flow args)
-              (catch Exception e
-                (println "Exception executing operator " e)
-                (ex-print e)
-                [:nos/error (ex-message e)]))]
-    res))
+  Returns a vector of effects."
+  [op args flow]
+  (try
+    (run-op op flow args)
+    (catch Exception e
+      (println "Exception executing operator " e)
+      (ex-print e)
+      [:nos/error (ex-message e)])))
 
 (defn finished?
   "Check if a flows status is in a finished state.
   Finished states are `:failed` and `:succeeded`, or when every op has
   a results."
   [{:keys [status state ops] :as _flow}]
-
   (or (= status :failed) (= status :succeeded)
       (every? state (map :id ops))))
 
@@ -288,7 +290,9 @@
              (nil? op)                  f
              (contains? state (:id op)) (recur f)
              :else
-             (let [args  (resolve-args (:args op) f vault)
+             (let [args  (-> op
+                             (fill-default-args f)
+                             (resolve-args f vault))
                    deps  (resolve-args (:deps op) f vault)
                    chkf  #(or (future? %) (nil? %))
                    error (or (some error? args) (error? args))]
