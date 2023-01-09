@@ -225,7 +225,7 @@
   [client container-id artifacts artifact-path workdir]
   (doseq [{:keys [name path]} artifacts]
     (let [dest-path (str artifact-path "/" name)
-          dir (str workdir "/" path)]
+          dir       (str workdir "/" path)]
       (log/debugf "Streaming from container from %s to %s" dir dest-path)
       (f/try-all
        [stream (get-container-archive client container-id dir)]
@@ -345,7 +345,7 @@
                                 :version  api-version})
 
               artifact-path (str "/tmp/nos-artifacts/" flow-id)
-              _ (io/make-parents (str artifact-path "ignored.txt"))
+              _ (io/make-parents (str artifact-path "/ignored.txt"))
 
               result (c/invoke client
                                {:op               :ContainerCreateLibpod
