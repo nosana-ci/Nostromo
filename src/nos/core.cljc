@@ -300,7 +300,6 @@
                    deps  (resolve-args (:deps op) f vault)
                    chkf  #(or (future? %) (nil? %))
                    error (or (some error? args) (error? args))]
-               (prn args)
                (if (or (some chkf (concat args deps))
                        error)
                  (recur f)          ; if a dep is pending or a future, do not run-op
