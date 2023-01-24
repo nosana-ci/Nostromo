@@ -185,7 +185,9 @@
       args)))
 
 (defn resolve-args [args {:keys [state] :as p} vault]
-  (ref-val args state vault))
+  (try
+    (ref-val args state vault)
+    (catch Exception e [:nos/error (ex-message e)])))
 
 ;; effects
 (defn fx? [res] (and (coll? res) (isa? (first res) ::fx)))
@@ -298,13 +300,14 @@
                              (fill-default-args f)
                              (resolve-args f vault))
                    deps  (resolve-args (:deps op) f vault)
-                   chkf  #(or (future? %) (nil? %))
-                   error (or (some error? args) (error? args))]
-               (if (or (some chkf (concat args deps))
-                       error)
-                 (recur f)          ; if a dep is pending or a future, do not run-op
+                   chkf  #(or (future? %) (nil? %))]
+               ;; if a dep is pending or a future, do not run-op
+               (if  (some chkf (concat args deps))
+                 (recur f)
                  (do
-                   (let [res      (execute-op op args f)
+                   (let [res      (if (error? args)
+                                    args
+                                      (execute-op op args f))
                          new-flow (handle-fx fe op res f)]
                      (go (<! (kv/assoc store id new-flow)))
                      (recur new-flow))))))))))))
