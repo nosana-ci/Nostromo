@@ -42,7 +42,7 @@
 (defn future? [form] (or
                       (and (vector? form) (= ::future (first form)))
                       (= :await-probe form)))
-(defn error? [form] (when (and (vector? form) (= :nos/error (first form))) form))
+(defn error? [form] (when (and (vector? form) (isa? :nos/error (first form))) form))
 (defn uuid [] (nano-id))
 (defn make-future [] [::future (uuid)])
 
@@ -210,7 +210,7 @@
 
 ;; register a future in the store
 (defmethod handle-fx :nos/future
-  [{:keys [store]} op [_ future-id :as res] flow]
+  [{:nos/keys [store]} op [_ future-id :as res] flow]
   (log :info "Registering future " res)
   (go (<! (kv/assoc-in store [future-id :deliver] [(:id flow) (:id op)])))
   (assoc-in flow [:state (:id op)] res))
@@ -284,7 +284,7 @@
   "Execute pending operators in a `flow`and ex.
   Ops are executed in order. If an op has any unresolved dependencies
   or argument it is skipped."
-  ([{:keys [store vault] :as fe} flow]
+  ([{:nos/keys [store vault] :as fe} flow]
    (if (finished? flow)
      flow
      (let [orig-flow (-> flow

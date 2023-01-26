@@ -4,7 +4,6 @@
             [clojure.core.async :as async :refer [<!! go <! >!]]
             [konserve.core :as kv]
             [nos.core :as flow]
-            [aleph.http :as http]
             [ring.middleware.multipart-params :refer [wrap-multipart-params]]
             [clojure.java.io :as io]
             [ring.middleware.cors :refer [wrap-cors]]))

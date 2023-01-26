@@ -1,6 +1,5 @@
 (ns nos.store
   (:require
-   [integrant.core :as ig]
    [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan put!]]
    [konserve.protocols :refer [-exists? -get-meta -get -assoc-in
                                -update-in -dissoc -bget -bassoc
@@ -11,7 +10,6 @@
    [konserve.serializers :as ser]
    [taoensso.timbre :as timbre :refer [trace]]
    [clojure.data.fressian :as fres]))
-
 
 (defn log-prepend
   "Prepend an element to a Konserve append log"
@@ -48,5 +46,6 @@
                    (conj hist elem))
             (conj hist elem)))))))
 
-(defmethod ig/init-key :nos/store [_ {:keys [path]}]
-  (<!! (new-fs-store path)))
+(defn use-fs-store [{:nos/keys [store-path] :as system}]
+  (-> system
+      (assoc :nos/store (<!! (new-fs-store store-path)))))

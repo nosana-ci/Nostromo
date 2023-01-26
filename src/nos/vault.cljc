@@ -1,6 +1,5 @@
 (ns nos.vault
-  (:require [aero.core :as aero]
-            [integrant.core :as ig]))
+  (:require [aero.core :as aero]))
 
 (defprotocol Vault
   (get-secret [vault id] "Get a secret"))
@@ -15,6 +14,6 @@
   (get-secret [vault id]
     (get vault id)))
 
-(defmethod ig/init-key :nos/vault
-  [_ {path :path profile :profile}]
-  (aero/read-config path {:profile profile}))
+(defn use-vault [{:keys [nos/vault-path system/profile] :as system}]
+  (assoc system :nos/vault
+         (aero/read-config vault-path {:profile profile})))

@@ -218,7 +218,8 @@
     (let [source-path  (str artifact-path "/" name)
           temp-archive (if create-tar
                          (create-tar "resource.tar" [source-path])
-                         source-path)]
+                         source-path)
+          _ (prn "source: " source-path " dest " path)]
       (put-container-archive client container-id (io/input-stream temp-archive) path))))
 
 (defn copy-artifacts-from-container!
@@ -283,7 +284,7 @@
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
-  [client commands image workdir inline-logs? conn]
+  [client commands image workdir inline-logs? conn op-log-path]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
@@ -295,14 +296,21 @@
         (f/if-let-failed?
          [;; this log command will log lines as a nested json array
           command-results
-          (with-open [w (io/writer log-file)]
+          (with-open [w    (io/writer log-file)
+                      w-op (io/writer op-log-path :append true)]
             (.write w "[")
+            (.write w-op (str "\u001b[32m" "$ " (:cmd cmd) "\033[0m" "\n"))
             (let [result
                   (do-command! client cmd img workdir
-                               #(.write w (str "[" %2 ","
-                                               (json/encode %1)
-                                               "],")) conn)]
+                               #(do (.write w
+                                            (str "[" %2 ","
+                                                 (json/encode %1)
+                                                 "],"))
+                                    (.write w-op %1)
+                                    (.flush w-op))
+                               conn)]
               (.write w "[1,\"\"]]")
+              (.write w-op "\n")
               result))]
          (do
            [:nos/error
@@ -324,14 +332,16 @@
                  :log       (cond-> log-path
                               inline-logs? (-> slurp json/decode))})]
            (if (pos? status)
-             [:cmd-error new-results]
+             [:nos/cmd-error new-results]
              (recur rst new-results))))))))
+
+(derive :nos/cmd-error :nos/error)
 
 ;; resources = copied from local disk to container before run
 ;; artifacts = copied from container to local disk after run
 (defmethod nos/run-op
   :container/run
-  [_
+  [{op-id :id}
    {flow-id :id}
    {:keys [image cmds conn artifacts resources workdir env inline-logs?]
     :or   {conn         {:uri "http://localhost:8080"}
@@ -363,7 +373,9 @@
 
               image (commit-container container-id conn)
 
-              results (do-commands! client cmds image workdir inline-logs? conn)
+              log-file (str "/tmp/nos-logs/" flow-id  "/" (name op-id) ".txt")
+              _ (io/make-parents log-file)
+              results (do-commands! client cmds image workdir inline-logs? conn log-file)
 
               _ (when (not-empty artifacts)
                   (log/debugf "Copying artifacts to host")
