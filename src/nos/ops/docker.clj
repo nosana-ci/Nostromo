@@ -331,6 +331,9 @@
                  :cmd       cmd
                  :log       (cond-> log-path
                               inline-logs? (-> slurp json/decode))})]
+           ;; write EOF character to the log stream
+           (with-open [w-op (io/writer op-log-path :append true)]
+             (.write w-op 26))
            (if (pos? status)
              [:nos/cmd-error new-results]
              (recur rst new-results))))))))
