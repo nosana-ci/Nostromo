@@ -299,7 +299,7 @@
           (with-open [w    (io/writer log-file)
                       w-op (io/writer op-log-path :append true)]
             (.write w "[")
-            (.write w-op (str "\u001b[32m" "$ " (:cmd cmd) "\033[0m" "\n"))
+            ;; (.write w-op (str "\u001b[32m" "$ " (:cmd cmd) "\033[0m" "\n"))
             (let [result
                   (do-command! client cmd img workdir
                                #(do (.write w
