@@ -50,7 +50,7 @@
         (case event
           :trigger
           (try (process-event! fe (first data))
-               (catch Excpetion e
+               (catch Exception e
                  (log :error "Failed to process event" e)))
           :deliver
           (if-let [[flow-id op] (<! (kv/get-in store [(first data) :deliver]))]
