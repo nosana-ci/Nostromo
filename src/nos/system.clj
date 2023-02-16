@@ -48,7 +48,10 @@
       (when-let [[event & data :as m] (<! flow-chan)]
         (log :info "Received message " m)
         (case event
-          :trigger (process-event! fe (first data))
+          :trigger
+          (try (process-event! fe (first data))
+               (catch Excpetion e
+                 (log :error "Failed to process event" e)))
           :deliver
           (if-let [[flow-id op] (<! (kv/get-in store [(first data) :deliver]))]
             (do (log :info "Deliver future" (first data))
