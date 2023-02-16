@@ -92,7 +92,7 @@
           :nos/coll
           :nos/pass)))))
 
-(defmethod ref-val :nos/ref [r state _] (get state (second r)))
+(defmethod ref-val :nos/ref [r state _] (get state (keyword (second r))))
 (defmethod ref-val :nos/vault [r _ vault] (vault/get-secret vault (second r)))
 (defmethod ref-val :nos/dep [_ _ _] :nos/skip)
 ;; the ::str inline operator concatenates arguments as strings and is recursive
