@@ -218,10 +218,15 @@
 (defmethod handle-fx :nos/flow
   [_ op [_ {:keys [ops]}] flow]
   ;; note: the state of the new flow is currently ignored
-  (-> flow
-      (add-ops ops)
-      (assoc-in [:state (:id op)] [::new-ops (count ops)])
-      (update :execution-path concat ops)))
+  (try
+    (-> flow
+        (add-ops ops)
+        (assoc-in [:state (:id op)] [::new-ops (count ops)])
+        (update :execution-path concat ops))
+    (catch Exception e
+      (-> flow
+          (assoc-in [:state (:id op)] [:nos/error "Failed to create flow"])
+          (assoc :status :failed)))))
 
 (defmethod handle-fx :nos/rerun [_ op _ flow]
   (update-in flow [:state] dissoc (:id op)))
