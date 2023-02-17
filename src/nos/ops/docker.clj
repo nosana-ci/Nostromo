@@ -30,6 +30,50 @@
               :version api-version})
    {:op :SystemInfoLibpod}))
 
+;; Some functions below are copied or based on bob-cd
+;;
+;; Copyright 2018-2022 Rahul De
+;; Source: https://github.com/bob-cd/bob/blob/main/runner/src/runner/engine.clj
+
+(defn delete-image
+  "Idempotently deletes an image along with any untagged parent images
+  that were referenced by that image by its full name or id."
+  [image client]
+  (c/invoke client
+            {:op     :ImageDeleteLibpod
+             :params {:name image}})
+  image)
+
+(defn delete-container
+  "Idempotently and forcefully removes container by id."
+  [id client]
+  (c/invoke client
+            {:op     :ContainerDeleteLibpod
+             :params {:name  id
+                      :force true}})
+  id)
+
+(defn gc-images
+  "Garbage-collect images and containers of a flow."
+  [res conn]
+  (log/debugf "Deleting all images for flow")
+  (let [img-client (c/client {:engine   :podman
+                              :category :libpod/images
+                              :conn     conn
+                              :version  api-version})
+        con-client (c/client {:engine   :podman
+                              :category :libpod/containers
+                              :conn     conn
+                              :version  api-version})
+        images     (map :img (second res))
+        containers (map :container (second res))]
+    (run! #(do (log/log :trace "Clean container " %)
+               (delete-container % con-client))
+          containers)
+    (run! #(do (log/log :trace "Clean image " %)
+               (delete-image % img-client))
+          images)))
+
 (defn- relativise-path [base path]
   (let [f (io/file base)
         uri (.toURI f)
@@ -55,10 +99,6 @@
     (.close tar-stream)
     archive-name))
 
-;; Some functions below are from bob-cd
-;;
-;; Copyright 2018-2022 Rahul De
-;; Source: https://github.com/bob-cd/bob/blob/main/runner/src/runner/engine.clj
 (defn sh-tokenize
   "Tokenizes a shell command given as a string into the command and its args.
 
@@ -388,7 +428,9 @@
                    artifacts
                    artifact-path
                    workdir))]
-             results
+             (do
+               (gc-images results conn)
+               results)
              (f/when-failed [err]
                             (log/errorf ":container/run failed %s" err)
                             [:nos/error (get-error-message err) []])))
