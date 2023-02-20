@@ -1,12 +1,13 @@
 (ns nos.store
   (:require
    [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan put!]]
-   [konserve.protocols :refer [-exists? -get-meta -get -assoc-in
+   [konserve.protocols :refer [-exists? -get-meta -get-in -assoc-in
                                -update-in -dissoc -bget -bassoc
                                -keys]]
    [hasch.core :refer [uuid]]
-   [konserve.filestore :refer [new-fs-store]]
+   [konserve.filestore :refer [connect-fs-store]]
    [konserve.core :as kv :refer [go-locked]]
+   [konserve.utils :refer [meta-update]]
    [konserve.serializers :as ser]
    [taoensso.timbre :as timbre :refer [trace]]
    [clojure.data.fressian :as fres]))
@@ -17,15 +18,15 @@
   (trace "append on key " key)
   (go-locked
    store key
-   (let [head (<! (-get store key))
+   (let [head (<! (-get-in store [key] nil {:sync? false}))
          [append-log? last-id first-id] head
          new-elem {:next first-id
                    :elem elem}
          id (uuid)]
      (when (and head (not= append-log? :append-log))
        (throw (ex-info "This is not an append-log." {:key key})))
-     (<! (-update-in store [id] (partial kv/meta-update key :append-log) (fn [_] new-elem) []))
-     (<! (-update-in store [key] (partial kv/meta-update key :append-log)
+     (<! (-update-in store [id] (partial meta-update key :append-log) (fn [_] new-elem) []))
+     (<! (-update-in store [key] (partial meta-update key :append-log)
                      (fn [_] [:append-log (or last-id id) id]) []))
      [last-id id])))
 
@@ -48,4 +49,4 @@
 
 (defn use-fs-store [{:nos/keys [store-path] :as system}]
   (-> system
-      (assoc :nos/store (<!! (new-fs-store store-path)))))
+      (assoc :nos/store (<!! (connect-fs-store store-path)))))
