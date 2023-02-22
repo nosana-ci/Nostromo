@@ -258,8 +258,7 @@
     (let [source-path  (str artifact-path "/" name)
           temp-archive (if create-tar
                          (create-tar "resource.tar" [source-path])
-                         source-path)
-          _ (prn "source: " source-path " dest " path)]
+                         source-path)]
       (put-container-archive client container-id (io/input-stream temp-archive) path))))
 
 (defn copy-artifacts-from-container!
@@ -307,7 +306,7 @@
               image (commit-container container-id conn)]
              (do
                (when (zero? status)
-                 (let [msg (format "Container %s exited with non-zero status %d"
+                 (let [msg (format "Container %s exited with zero status %d"
                                    container-id status)]
                    (log/debug msg)
                    (f/fail msg)))
@@ -324,7 +323,7 @@
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
-  [client commands image workdir inline-logs? conn op-log-path]
+  [client commands image workdir inline-logs? stdout? conn op-log-path]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
@@ -346,6 +345,7 @@
                                             (str "[" %2 ","
                                                  (json/encode %1)
                                                  "],"))
+                                    (when stdout? (println %1))
                                     (.write w-op %1)
                                     (.flush w-op))
                                conn)]
@@ -386,12 +386,13 @@
   :container/run
   [{op-id :id}
    {flow-id :id}
-   {:keys [image cmds conn artifacts resources workdir env inline-logs?]
+   {:keys [image cmds conn artifacts resources workdir env inline-logs? stdout?]
     :or   {conn         {:uri "http://localhost:8080"}
            workdir      "/root"
            resources    []
            artifacts    []
-           inline-logs? false}}]
+           inline-logs? false
+           stdout?      false}}]
   (f/try-all [_ (docker-pull conn image)
               _ (log/debugf "Pulled image %s" image)
               client (c/client {:engine   :podman
@@ -418,7 +419,7 @@
 
               log-file (str "/tmp/nos-logs/" flow-id  "/" (name op-id) ".txt")
               _ (io/make-parents log-file)
-              results (do-commands! client cmds image workdir inline-logs? conn log-file)
+              results (do-commands! client cmds image workdir inline-logs? stdout? conn log-file)
 
               _ (when (not-empty artifacts)
                   (log/debugf "Copying artifacts to host")
