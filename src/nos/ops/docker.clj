@@ -265,7 +265,9 @@
   [client container-id artifacts artifact-path workdir]
   (doseq [{:keys [name path]} artifacts]
     (let [dest-path (str artifact-path "/" name)
-          dir       (str workdir "/" path)]
+          dir       (if (str/starts-with? path "/")
+                      path
+                      (str workdir "/" path))]
       (log/debugf "Streaming from container from %s to %s" dir dest-path)
       (f/try-all
        [stream (get-container-archive client container-id dir)]
