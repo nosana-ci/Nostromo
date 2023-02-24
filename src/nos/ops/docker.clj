@@ -405,8 +405,8 @@
            artifact-path (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?  false
            stdout?       false}}]
-  (f/try-all [;;_ (docker-pull conn image)
-              ;;_ (log/debugf "Pulled image %s" image)
+  (f/try-all [_ (log/debugf "Pulling image %s" image)
+              _ (docker-pull conn image)
 
               client (c/client {:engine   :podman
                                 :category :libpod/containers
