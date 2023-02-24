@@ -393,21 +393,23 @@
   :container/run
   [{op-id :id}
    {flow-id :id}
-   {:keys [image cmds conn artifacts resources workdir env inline-logs? stdout?]
-    :or   {conn         {:uri "http://localhost:8080"}
-           workdir      "/root"
-           resources    []
-           artifacts    []
-           inline-logs? false
-           stdout?      false}}]
-  (f/try-all [_ (docker-pull conn image)
-              _ (log/debugf "Pulled image %s" image)
+   {:keys [image cmds conn artifacts resources workdir env inline-logs? stdout?
+           artifact-path]
+    :or   {conn          {:uri "http://localhost:8080"}
+           workdir       "/root"
+           resources     []
+           artifacts     []
+           artifact-path (str "/tmp/nos-artifacts/" flow-id)
+           inline-logs?  false
+           stdout?       false}}]
+  (f/try-all [;;_ (docker-pull conn image)
+              ;;_ (log/debugf "Pulled image %s" image)
+
               client (c/client {:engine   :podman
                                 :category :libpod/containers
                                 :conn     conn
                                 :version  api-version})
 
-              artifact-path (str "/tmp/nos-artifacts/" flow-id)
               _ (io/make-parents (str artifact-path "/ignored.txt"))
 
               result (c/invoke client
