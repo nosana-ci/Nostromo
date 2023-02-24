@@ -352,7 +352,10 @@
                                             (str "[" %2 ","
                                                  (json/encode %1)
                                                  "],"))
-                                    (when stdout? (println %1))
+                                    (when stdout?
+                                      (print %1)
+                                      (flush))
+
                                     (.write w-op %1)
                                     (.flush w-op))
                                conn)]
