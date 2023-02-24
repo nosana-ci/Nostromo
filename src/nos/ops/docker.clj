@@ -254,12 +254,17 @@
 
 (defn copy-resources-to-container!
   [client container-id resources artifact-path]
-  (doseq [{:keys [name path create-tar] :or {create-tar? false}} resources]
+  (doseq [{:keys [name path create-tar optional?]
+           :or   {create-tar? false
+                  optional?   false}} resources]
     (let [source-path  (str artifact-path "/" name)
           temp-archive (if create-tar
                          (create-tar "resource.tar" [source-path])
-                         source-path)]
-      (put-container-archive client container-id (io/input-stream temp-archive) path))))
+                         source-path)
+          in-file      (io/as-file temp-archive)]
+      (when (.exists in-file)
+        (put-container-archive
+         client container-id (io/input-stream in-file) path)))))
 
 (defn copy-artifacts-from-container!
   [client container-id artifacts artifact-path workdir]
