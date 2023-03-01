@@ -214,10 +214,10 @@
   (let [result (f/try*
                 (with-open [xin archive-input-stream]
                   (c/invoke client
-                            {:op :PutContainerArchiveLibpod
-                             :params {:name id
-                                      :path path}
-                             :data xin
+                            {:op               :PutContainerArchiveLibpod
+                             :params           {:name id
+                                                :path path}
+                             :data             xin
                              :throw-exceptions true})))]
     (when (f/failed? result)
       (log/errorf "Could not put archive in container: %s" result)
@@ -405,6 +405,7 @@
            artifact-path (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?  false
            stdout?       false}}]
+
   (f/try-all [_ (log/debugf "Pulling image %s" image)
               _ (docker-pull conn image)
 
@@ -433,7 +434,8 @@
               _ (io/make-parents log-file)
               results (do-commands! client cmds image workdir inline-logs? stdout? conn log-file)
 
-              _ (when (not-empty artifacts)
+              _ (when (and (not-empty artifacts)
+                           (not= :nos/error (first results)))
                   (log/debugf "Copying artifacts to host")
                   (copy-artifacts-from-container!
                    client
