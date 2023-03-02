@@ -18,6 +18,15 @@
 
 (def api-version "v4.0.0")
 
+(defmacro time-log
+  "Evaluates expr and prints the time it took.  Returns the value of
+ expr."
+  [expr msg level]
+  `(let [start# (. System (nanoTime))
+         ret# ~expr]
+     (log/log ~level (str ~msg " (" (/ (double (- (. System (nanoTime)) start#)) 1000000.0) " ms)"))
+     ret#))
+
 (defn get-info
   "Get the podman system info.
   Useful for checking connection. The `conn` is of format `{:uri
@@ -56,7 +65,6 @@
 (defn gc-images
   "Garbage-collect images and containers of a flow."
   [res conn]
-  (log/debugf "Deleting all images for flow")
   (let [img-client (c/client {:engine   :podman
                               :category :libpod/images
                               :conn     conn
@@ -310,7 +318,7 @@
                                        :params           {:name container-id}
                                        :throw-exceptions true})
 
-              image (commit-container container-id conn)]
+              image (time-log (commit-container container-id conn) "Commited container" :debug)]
              (do
                (when (zero? status)
                  (let [msg (format "Container %s exited with zero status %d"
@@ -392,6 +400,8 @@
 
 ;; resources = copied from local disk to container before run
 ;; artifacts = copied from container to local disk after run
+
+
 (defmethod nos/run-op
   :container/run
   [{op-id :id}
@@ -406,8 +416,7 @@
            inline-logs?  false
            stdout?       false}}]
 
-  (f/try-all [_ (log/debugf "Pulling image %s" image)
-              _ (docker-pull conn image)
+  (f/try-all [_ (time-log (docker-pull conn image) (str "Pulling image " image) :info)
 
               client (c/client {:engine   :podman
                                 :category :libpod/containers
@@ -428,7 +437,7 @@
                   (log/debugf "Copying resources to container" )
                   (copy-resources-to-container! client container-id resources artifact-path))
 
-              image (commit-container container-id conn)
+              image (time-log (commit-container container-id conn) "Commited container image" :debug)
 
               log-file (str "/tmp/nos-logs/" flow-id  "/" (name op-id) ".txt")
               _ (io/make-parents log-file)
@@ -444,7 +453,7 @@
                    artifact-path
                    workdir))]
              (do
-               (gc-images results conn)
+               (time-log (gc-images results conn) "Deleted images for flow" :debug)
                results)
              (f/when-failed [err]
                             (log/errorf ":container/run failed %s" err)
