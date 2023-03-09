@@ -290,6 +290,12 @@
         (throw (ex-info (format "Error in copying artifact %s from %s: %s"
                                 name dir (f/message err)) {})))))))
 
+(defn get-error-message [e]
+  (let [msg  (ex-message e)
+        data (ex-data e)
+        res  (str msg ": " (:body data))]
+    res))
+
 (defn do-command!
   "Runs a command in a container from the `image`.
   Returns the result image and container-id as a tuple.
@@ -336,11 +342,7 @@
                             (log/error "Error running command " (get-error-message e))
                             e)))
 
-(defn get-error-message [e]
-  (let [msg  (ex-message e)
-        data (ex-data e)
-        res  (str msg ": " (:body data))]
-    res))
+
 
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
