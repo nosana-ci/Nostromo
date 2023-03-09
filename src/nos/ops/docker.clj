@@ -294,16 +294,22 @@
   "Runs a command in a container from the `image`.
   Returns the result image and container-id as a tuple.
   `log-fn` is a function like #(prn \"CNT: \" %)"
-  [client cmd image workdir log-fn conn]
-  (f/try-all [result (c/invoke client
-                               {:op   :ContainerCreateLibpod
-                                :data {:image        image
-                                       :command      (sh-tokenize (:cmd cmd))
-                                       :env          {}
-                                       :work_dir     (or (:workdir cmd) workdir)
-                                       :cgroups_mode "disabled"}
+  [client cmd image workdir entrypoint log-fn conn]
+  (f/try-all [entrypoint (or (:entrypoint cmd) entrypoint)
+
+              result (c/invoke client
+                               {:op :ContainerCreateLibpod
+                                :data
+                                (cond->
+                                    {:image        image
+                                     :command      (sh-tokenize (:cmd cmd))
+                                     :env          {}
+                                     :work_dir     (or (:workdir cmd) workdir)
+                                     :cgroups_mode "disabled"}
+                                  entrypoint (assoc :entrypoint entrypoint))
                                 :throw-exceptions
                                 true})
+
               container-id (:Id result)
 
               _ (c/invoke client {:op               :ContainerStartLibpod
@@ -327,18 +333,19 @@
                    (f/fail msg)))
                [status image container-id])
              (f/when-failed [e]
-                            (log/error "Error running command " e)
+                            (log/error "Error running command " (get-error-message e))
                             e)))
 
 (defn get-error-message [e]
   (let [msg  (ex-message e)
-        data (ex-data e)]
-    (str msg ": " (:body data))))
+        data (ex-data e)
+        res  (str msg ": " (:body data))]
+    res))
 
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
-  [client commands image workdir inline-logs? stdout? conn op-log-path]
+  [client commands image workdir entrypoint inline-logs? stdout? conn op-log-path]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
@@ -355,7 +362,7 @@
             (.write w "[")
             ;; (.write w-op (str "\u001b[32m" "$ " (:cmd cmd) "\033[0m" "\n"))
             (let [result
-                  (do-command! client cmd img workdir
+                  (do-command! client cmd img workdir entrypoint
                                #(do (.write w
                                             (str "[" %2 ","
                                                  (json/encode %1)
@@ -406,18 +413,17 @@
   :container/run
   [{op-id :id}
    {flow-id :id}
-   {:keys [image cmds conn artifacts resources workdir env inline-logs? stdout?
+   {:keys [image cmds conn artifacts resources workdir entrypoint env inline-logs? stdout?
            artifact-path]
     :or   {conn          {:uri "http://localhost:8080"}
            workdir       "/root"
+           entrypoint    nil
            resources     []
            artifacts     []
            artifact-path (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?  false
            stdout?       false}}]
-
   (f/try-all [_ (time-log (docker-pull conn image) (str "Pulling image " image) :info)
-
               client (c/client {:engine   :podman
                                 :category :libpod/containers
                                 :conn     conn
@@ -441,7 +447,7 @@
 
               log-file (str "/tmp/nos-logs/" flow-id  "/" (name op-id) ".txt")
               _ (io/make-parents log-file)
-              results (do-commands! client cmds image workdir inline-logs? stdout? conn log-file)
+              results (do-commands! client cmds image workdir entrypoint inline-logs? stdout? conn log-file)
 
               _ (when (and (not-empty artifacts)
                            (not= :nos/error (first results)))
@@ -453,7 +459,8 @@
                    artifact-path
                    workdir))]
              (do
-               (time-log (gc-images results conn) "Deleted images for flow" :debug)
+               (when (not= :nos/error (first results))
+                 (time-log (gc-images results conn) "Deleted images for flow" :debug))
                results)
              (f/when-failed [err]
                             (log/errorf ":container/run failed %s" err)
