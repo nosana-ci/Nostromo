@@ -9,10 +9,12 @@
    [taoensso.timbre :as log]
    [clj-compress.core :refer [create-archive]])
   (:import [java.io BufferedReader]
+           [java.net URI]
            [java.nio ByteBuffer CharBuffer]
+           [java.nio.file FileSystems PathMatcher Paths]
            [java.nio.charset Charset StandardCharsets]
            [java.util Arrays]
-           [org.apache.commons.compress.archivers.tar TarArchiveOutputStream]
+           [org.apache.commons.compress.archivers.tar TarArchiveOutputStream TarArchiveInputStream]
            [org.apache.commons.io FilenameUtils]
            [org.apache.commons.compress.utils IOUtils]))
 
@@ -235,15 +237,88 @@
   "Returns a tar stream of a path in the container by id."
   [client id path]
   (f/try-all [result (c/invoke client
-                               {:op :ContainerArchiveLibpod
-                                :params {:name id
-                                         :path path}
-                                :as :stream
+                               {:op               :ContainerArchiveLibpod
+                                :params           {:name id
+                                                   :path path}
+                                :as               :stream
                                 :throw-exceptions true})]
              result
              (f/when-failed [err]
                             (log/errorf "Error fetching container archive: %s" err)
                             err)))
+
+(defn has-glob?
+  "Return `true` is `path` is a glob pattern (contains a *)."
+  [path]
+  (re-find #"(?<!\\)\*" path))
+
+(defn single-file? [path]
+  (not (str/includes? path "/")))
+
+(defn path-before-glob
+  "Returns the part of path that comes before the first part with a * character.
+  Does not yet work with other glob patterns like ? and {a,b}. If
+  there is no match then returns the original `path`."
+  [path]
+  (if (single-file? path)
+    (if (has-glob? path) "" path)
+    (-> path (str/split #"(?<!\\)\*") first)))
+
+
+(defn strip-first-dir-from-path [path]
+  (str/join "/" (-> path (str/split #"/") rest)))
+
+(defn process-artifact-tar-stream [out-stream stream dest-path prepend-path glob]
+  (let [tar-in  (TarArchiveInputStream. stream)
+        tar-out (TarArchiveOutputStream. out-stream)]
+    ;; (.setLongFileMode tar-out TarArchiveOutputStream/LONGFILE_POSIX)
+    (loop [entry (.getNextTarEntry tar-in)]
+      (when entry
+        (let [new-name (str prepend-path
+                            (if (single-file? prepend-path) "" "/")
+                            (strip-first-dir-from-path (.getName entry)))
+
+              matcher (when glob
+                        (.getPathMatcher (FileSystems/getDefault)
+                                         (str "glob:/"
+                                              (FilenameUtils/normalizeNoEndSeparator glob))))]
+          (when (or (not glob)
+                    (.matches matcher (Paths/get (URI/create (str "file:///" new-name)))))
+            (.setName entry new-name)
+            (.putArchiveEntry tar-out entry)
+            (when (.isFile entry)
+              (io/copy tar-in tar-out :buffer-size 8192))
+            (.closeArchiveEntry tar-out)))
+        (recur (.getNextEntry tar-in))))
+    ;; TOOD: should be finished, out side of the loop
+    ;; (.finish tar-out)
+    ))
+
+(defn copy-artifacts-from-container!
+  [client container-id artifacts artifact-store-path workdir]
+  (doseq [{:keys [name path paths]} artifacts]
+    (let [paths     (or paths [path])
+          dest-path (str artifact-store-path "/" name)]
+      (with-open [out-stream (io/output-stream (io/file dest-path))]
+        (doseq [p paths]
+          (let [clean-path (-> p
+                               FilenameUtils/normalizeNoEndSeparator
+                               path-before-glob
+                               FilenameUtils/normalizeNoEndSeparator)
+                full-path  (if (str/starts-with? clean-path "/")
+                             clean-path
+                             (str workdir "/" clean-path))]
+            (log/debugf "Streaming from container path %s to host %s" full-path dest-path)
+            (f/try-all
+             [stream (get-container-archive client container-id full-path)]
+             (do
+               (process-artifact-tar-stream out-stream stream dest-path clean-path
+                                            (when (has-glob? p) p))
+               (.close stream))
+             (f/when-failed
+              [err]
+              (throw (ex-info (format "Error in copying artifact %s from %s: %s"
+                                      name full-path (f/message err)) {}))))))))))
 
 (defn inspect-container
   "Returns the container info by id."
@@ -261,34 +336,22 @@
   (create-tar arch-name [path]))
 
 (defn copy-resources-to-container!
-  [client container-id resources artifact-path]
+  [client container-id resources artifact-path workdir]
   (doseq [{:keys [name path create-tar optional?]
            :or   {create-tar? false
                   optional?   false}} resources]
-    (let [source-path  (str artifact-path "/" name)
+    (let [clean-path   (FilenameUtils/normalizeNoEndSeparator path)
+          full-path    (if (str/starts-with? clean-path "/")
+                         clean-path
+                         (str workdir "/" clean-path))
+          source-path  (str artifact-path "/" name)
           temp-archive (if create-tar
                          (create-tar "resource.tar" [source-path])
                          source-path)
           in-file      (io/as-file temp-archive)]
       (when (.exists in-file)
         (put-container-archive
-         client container-id (io/input-stream in-file) path)))))
-
-(defn copy-artifacts-from-container!
-  [client container-id artifacts artifact-path workdir]
-  (doseq [{:keys [name path]} artifacts]
-    (let [dest-path (str artifact-path "/" name)
-          dir       (if (str/starts-with? path "/")
-                      path
-                      (str workdir "/" path))]
-      (log/debugf "Streaming from container from %s to %s" dir dest-path)
-      (f/try-all
-       [stream (get-container-archive client container-id dir)]
-       (io/copy stream (io/file dest-path))
-       (f/when-failed
-        [err]
-        (throw (ex-info (format "Error in copying artifact %s from %s: %s"
-                                name dir (f/message err)) {})))))))
+         client container-id (io/input-stream in-file) full-path)))))
 
 (defn get-error-message [e]
   (let [msg  (ex-message e)
@@ -425,7 +488,9 @@
            artifact-path (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?  false
            stdout?       false}}]
-  (f/try-all [_ (time-log (docker-pull conn image) (str "Pulling image " image) :info)
+  (f/try-all [_ (log/tracef "Trying to pull %s... " image)
+              _ (docker-pull conn image)
+
               client (c/client {:engine   :podman
                                 :category :libpod/containers
                                 :conn     conn
@@ -443,7 +508,7 @@
 
               _ (when (not-empty resources)
                   (log/debugf "Copying resources to container" )
-                  (copy-resources-to-container! client container-id resources artifact-path))
+                  (copy-resources-to-container! client container-id resources artifact-path workdir))
 
               image (time-log (commit-container container-id conn) "Commited container image" :debug)
 
@@ -490,3 +555,11 @@
                    :args [{:cmds      [{:cmd "ls -l dummy"}]
                            :image     "ubuntu"
                            :resources [{:name "dummy.tar" :dest "/root"}]}]}]})))
+
+;; To inspect OCI docs
+(comment
+  (def client (c/client {:engine   :podman
+                         :category :libpod/containers
+                         :conn     {:uri "http://localhost:8080"}
+                         :version   "v4.0.0"}))
+  (c/doc client :ContainerArchiveLibpod))
