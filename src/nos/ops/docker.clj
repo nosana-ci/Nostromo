@@ -266,17 +266,34 @@
 
 
 (defn strip-first-dir-from-path [path]
-  (str/join "/" (-> path (str/split #"/") rest)))
+  (if (single-file? path)
+    ""
+    (str/join "/" (-> path (str/split #"/") rest))))
 
-(defn process-artifact-tar-stream [out-stream stream dest-path prepend-path glob]
+(defn process-artifact-tar-stream
+  [out-stream stream dest-path prepend-path glob]
   (let [tar-in  (TarArchiveInputStream. stream)
         tar-out (TarArchiveOutputStream. out-stream)]
-    ;; (.setLongFileMode tar-out TarArchiveOutputStream/LONGFILE_POSIX)
+    (.setLongFileMode tar-out TarArchiveOutputStream/LONGFILE_POSIX)
     (loop [entry (.getNextTarEntry tar-in)]
       (when entry
-        (let [new-name (str prepend-path
-                            (if (single-file? prepend-path) "" "/")
-                            (strip-first-dir-from-path (.getName entry)))
+        (let [name          (.getName entry)
+
+              ;; podman always prepends the parent directory unless
+              ;; its a single file artifact.
+              name-stripped (strip-first-dir-from-path name)
+
+              ;; if this is a single file artifact just use the
+              ;; original name. else we swap the first directory with
+              ;; the prepend path (the working directory).
+              new-name (if (and (.isFile entry)
+                                (= name prepend-path))
+                         name
+                         (str prepend-path
+                              ;; only put a "/" when required
+                              (if (or (empty? prepend-path)
+                                      (empty? name-stripped)) "" "/")
+                              name-stripped))
 
               matcher (when glob
                         (.getPathMatcher (FileSystems/getDefault)
