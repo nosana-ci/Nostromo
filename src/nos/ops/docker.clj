@@ -391,6 +391,7 @@
                                      :command      (sh-tokenize (:cmd cmd))
                                      :env          {}
                                      :work_dir     (or (:workdir cmd) workdir)
+                                     :create_working_dir true
                                      :cgroups_mode "disabled"}
                                   entrypoint (assoc :entrypoint entrypoint))
                                 :throw-exceptions
