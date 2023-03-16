@@ -422,8 +422,6 @@
                             (log/error "Error running command " (get-error-message e))
                             e)))
 
-
-
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
@@ -533,21 +531,24 @@
 
               log-file (str "/tmp/nos-logs/" flow-id  "/" (name op-id) ".txt")
               _ (io/make-parents log-file)
-              results (do-commands! client cmds image workdir inline-logs? stdout? conn log-file)
-
-              _ (when (and (not-empty artifacts)
-                           (not= :nos/error (first results)))
-                  (log/debugf "Copying artifacts to host")
-                  (copy-artifacts-from-container!
-                   client
-                   (-> results second last :container)
-                   artifacts
-                   artifact-path
-                   workdir))]
+              results (do-commands! client cmds image workdir inline-logs? stdout? conn log-file)]
              (do
-               (when (not= :nos/error (first results))
-                 (time-log (gc-images results conn) "Deleted images for flow" :debug))
-               results)
+               (f/try-all [_ (when (and (not-empty artifacts)
+                                        (not= :nos/error (first results)))
+                               (log/debugf "Copying artifacts to host")
+                               (copy-artifacts-from-container!
+                                client
+                                (-> results second last :container)
+                                artifacts
+                                artifact-path
+                                workdir))
+                           _ (when (not= :nos/error (first results))
+                               (time-log (gc-images results conn) "Deleted images for flow" :debug))]
+                          results
+                          (f/when-failed
+                           [err]
+                           (log/errorf ":container/run failed %s" err)
+                           [:nos/error (get-error-message err) results])))
              (f/when-failed [err]
                             (log/errorf ":container/run failed %s" err)
                             [:nos/error (get-error-message err) []])))
