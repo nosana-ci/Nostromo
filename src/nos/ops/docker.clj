@@ -300,7 +300,7 @@
                                          (str "glob:/"
                                               (FilenameUtils/normalizeNoEndSeparator glob))))]
           (when (or (not glob)
-                    (.matches matcher (Paths/get (URI/create (str "file:///" new-name)))))
+                    (.matches matcher (Paths/get (URI/create (str "file:///" (str/replace new-name " " "+"))))))
             (.setName entry new-name)
             (.putArchiveEntry tar-out entry)
             (when (.isFile entry)
