@@ -313,7 +313,7 @@
 
 (defn copy-artifacts-from-container!
   [client container-id artifacts artifact-store-path workdir]
-  (doseq [{:keys [name path paths]} artifacts]
+  (doseq [{:keys [name path paths required] :or {required true}} artifacts]
     (let [paths     (or paths [path])
           dest-path (str artifact-store-path "/" name)]
       (with-open [out-stream (io/output-stream (io/file dest-path))]
@@ -334,8 +334,9 @@
                (.close stream))
              (f/when-failed
               [err]
-              (throw (ex-info (format "Error in copying artifact %s from %s: %s"
-                                      name full-path (f/message err)) {}))))))))))
+              (when required
+                (throw (ex-info (format "Error in copying artifact %s from %s: %s"
+                                        name full-path (f/message err)) {})))))))))))
 
 (defn inspect-container
   "Returns the container info by id."
@@ -354,9 +355,9 @@
 
 (defn copy-resources-to-container!
   [client container-id resources artifact-path workdir]
-  (doseq [{:keys [name path create-tar optional?]
+  (doseq [{:keys [name path create-tar required]
            :or   {create-tar? false
-                  optional?   false}} resources]
+                  required    false}} resources]
     (let [clean-path   (FilenameUtils/normalizeNoEndSeparator path)
           full-path    (if (str/starts-with? clean-path "/")
                          clean-path
@@ -366,9 +367,14 @@
                          (create-tar "resource.tar" [source-path])
                          source-path)
           in-file      (io/as-file temp-archive)]
-      (when (.exists in-file)
+      (cond
+        (.exists in-file)
         (put-container-archive
-         client container-id (io/input-stream in-file) full-path)))))
+         client container-id (io/input-stream in-file) full-path)
+        required
+        (throw (ex-info (format "Resource does not exist: %s"
+                                name) {}))
+        :else true))))
 
 (defn get-error-message [e]
   (let [msg  (ex-message e)
