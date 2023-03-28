@@ -167,6 +167,7 @@
                           :category :libpod/images
                           :conn conn
                           :version api-version})]
+    (println "Pulling image " image " with secret " image-pull-secret)
     (c/invoke client {:op :ImagePullLibpod
                       :params {:reference image
                                :X-Registry-Auth (-> image-pull-secret json/encode b64-encode)}
