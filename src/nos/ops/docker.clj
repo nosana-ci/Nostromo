@@ -16,7 +16,8 @@
            [java.util Arrays]
            [org.apache.commons.compress.archivers.tar TarArchiveOutputStream TarArchiveInputStream]
            [org.apache.commons.io FilenameUtils]
-           [org.apache.commons.compress.utils IOUtils]))
+           [org.apache.commons.compress.utils IOUtils]
+           [java.util.Base64 Base64]))
 
 (def api-version "v4.0.0")
 
@@ -156,13 +157,19 @@
         (conj args current-arg)
         args))))
 
-(defn docker-pull [conn image]
+(defn b64-encode
+  "Encodes a string to base64."
+  [to-encode]
+  (.encodeToString (Base64/getEncoder) (.getBytes to-encode)))
+
+(defn docker-pull [conn image auth]
   (let [client (c/client {:engine :podman
                           :category :libpod/images
                           :conn conn
                           :version api-version})]
     (c/invoke client {:op :ImagePullLibpod
-                      :params {:reference image}
+                      :params {:reference image
+                               :X-Registry-Auth (-> auth json/encode b64-encode)}
                       :throw-exceptions true})))
 
 (defn commit-container
@@ -500,7 +507,7 @@
   [{op-id :id}
    {flow-id :id}
    {:keys [image cmds conn artifacts resources workdir entrypoint env inline-logs? stdout?
-           artifact-path]
+           artifact-path auth]
     :or   {conn          {:uri "http://localhost:8080"}
            workdir       "/root"
            entrypoint    nil
@@ -508,9 +515,10 @@
            artifacts     []
            artifact-path (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?  false
-           stdout?       false}}]
+           stdout?       false
+           auth          nil}}]
   (f/try-all [_ (log/tracef "Trying to pull %s... " image)
-              _ (docker-pull conn image)
+              _ (docker-pull conn image auth)
 
               client (c/client {:engine   :podman
                                 :category :libpod/containers
