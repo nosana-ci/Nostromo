@@ -162,15 +162,15 @@
   [to-encode]
   (.encodeToString (Base64/getEncoder) (.getBytes to-encode)))
 
-(defn docker-pull [conn image image-pull-secret]
+(defn docker-pull [conn image image_pull_secrets]
   (let [client (c/client {:engine :podman
                           :category :libpod/images
                           :conn conn
                           :version api-version})]
-    (println "Pulling image " image " with secret " image-pull-secret)
+    (println "Pulling image " image " with secret " image_pull_secrets)
     (c/invoke client {:op :ImagePullLibpod
                       :params {:reference image
-                               :X-Registry-Auth (-> image-pull-secret json/encode b64-encode)}
+                               :X-Registry-Auth (-> image_pull_secrets json/encode b64-encode)}
                       :throw-exceptions true})))
 
 (defn commit-container
