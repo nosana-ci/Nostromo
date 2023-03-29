@@ -162,15 +162,15 @@
   [to-encode]
   (.encodeToString (Base64/getEncoder) (.getBytes to-encode)))
 
-(defn docker-pull [conn image image_pull_secrets]
+(defn docker-pull [conn image image-pull-secret]
   (let [client (c/client {:engine :podman
                           :category :libpod/images
                           :conn conn
                           :version api-version})]
-    (println "Pulling image " image " with secret " image_pull_secrets)
+    (println "Pulling image " image " with secret " image-pull-secret)
     (c/invoke client {:op :ImagePullLibpod
                       :params {:reference image
-                               :X-Registry-Auth (-> image_pull_secrets json/encode b64-encode)}
+                               :X-Registry-Auth (-> image-pull-secret json/encode b64-encode)}
                       :throw-exceptions true})))
 
 (defn commit-container
@@ -508,7 +508,7 @@
   [{op-id :id}
    {flow-id :id}
    {:keys [image cmds conn artifacts resources workdir entrypoint env inline-logs? stdout?
-           artifact-path image_pull_secrets]
+           artifact-path image-pull-secret]
     :or   {conn          {:uri "http://localhost:8080"}
            workdir       "/root"
            entrypoint    nil
@@ -517,9 +517,9 @@
            artifact-path (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?  false
            stdout?       false
-           image_pull_secrets          nil}}]
+           image-pull-secret          nil}}]
   (f/try-all [_ (log/tracef "Trying to pull %s... " image)
-              _ (docker-pull conn image image_pull_secrets)
+              _ (docker-pull conn image image-pull-secret)
 
               client (c/client {:engine   :podman
                                 :category :libpod/containers
