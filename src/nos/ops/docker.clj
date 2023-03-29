@@ -508,7 +508,7 @@
   [{op-id :id}
    {flow-id :id}
    {:keys [image cmds conn artifacts resources workdir entrypoint env inline-logs? stdout?
-           artifact-path image-pull-secret]
+           artifact-path image_pull_secrets]
     :or   {conn          {:uri "http://localhost:8080"}
            workdir       "/root"
            entrypoint    nil
@@ -517,9 +517,9 @@
            artifact-path (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?  false
            stdout?       false
-           image-pull-secret          nil}}]
+           image_pull_secrets          nil}}]
   (f/try-all [_ (log/tracef "Trying to pull %s... " image)
-              _ (docker-pull conn image image-pull-secret)
+              _ (docker-pull conn image image_pull_secrets)
 
               client (c/client {:engine   :podman
                                 :category :libpod/containers
