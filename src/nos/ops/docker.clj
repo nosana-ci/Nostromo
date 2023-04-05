@@ -169,7 +169,8 @@
                           :version api-version})]
     (c/invoke client {:op :ImagePullLibpod
                       :params {:reference image
-                               :X-Registry-Auth (-> image-pull-secret json/encode b64-encode)}
+                               :X-Registry-Auth
+                               (-> image-pull-secret json/encode b64-encode)}
                       :throw-exceptions true})))
 
 (defn commit-container

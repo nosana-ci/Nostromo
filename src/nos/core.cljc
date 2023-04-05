@@ -57,7 +57,7 @@
                                         (= (first key) ::dep))))
 
 (defn reflike? [key]
-  (and (vector? key)
+  (and (coll? key)
        (let [v (keyword (first key))]
          (or (= v :nos/ref)
              (= v :nos/vault)
