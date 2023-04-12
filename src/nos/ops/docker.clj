@@ -394,7 +394,7 @@
   "Runs a command in a container from the `image`.
   Returns the result image and container-id as a tuple.
   `log-fn` is a function like #(prn \"CNT: \" %)"
-  [client cmd image workdir log-fn conn]
+  [client cmd image workdir log-fn conn commit?]
   (f/try-all [result (c/invoke
                       client
                       {:op               :ContainerCreateLibpod
@@ -424,7 +424,9 @@
                                        :params           {:name container-id}
                                        :throw-exceptions true})
 
-              image (time-log (commit-container container-id conn) "Commited container" :debug)]
+              image (when commit?
+                      (time-log (commit-container container-id conn)
+                                "Commited container" :debug))]
              (do
                (when (zero? status)
                  (let [msg (format "Container %s exited with zero status %d"
@@ -467,7 +469,8 @@
 
                                     (.write w-op %1)
                                     (.flush w-op))
-                               conn)]
+                               conn
+                               (not-empty rst))]
               (.write w "[1,\"\"]]")
               (.write w-op "\n")
               result))]
@@ -509,15 +512,15 @@
    {flow-id :id}
    {:keys [image cmds conn artifacts resources workdir entrypoint env inline-logs? stdout?
            artifact-path image-pull-secret]
-    :or   {conn          {:uri "http://localhost:8080"}
-           workdir       "/root"
-           entrypoint    nil
-           resources     []
-           artifacts     []
-           artifact-path (str "/tmp/nos-artifacts/" flow-id)
-           inline-logs?  false
-           stdout?       false
-           image-pull-secret          nil}}]
+    :or   {conn              {:uri "http://localhost:8080"}
+           workdir           "/root"
+           entrypoint        nil
+           resources         []
+           artifacts         []
+           artifact-path     (str "/tmp/nos-artifacts/" flow-id)
+           inline-logs?      false
+           stdout?           false
+           image-pull-secret nil}}]
   (f/try-all [_ (log/tracef "Trying to pull %s... " image)
               _ (docker-pull conn image image-pull-secret)
 
@@ -539,14 +542,21 @@
               container-id (:Id result)
 
               _ (when (not-empty resources)
-                  (log/debugf "Copying resources to container" )
-                  (copy-resources-to-container! client container-id resources artifact-path workdir))
+                  (time-log
+                   (copy-resources-to-container!
+                    client container-id resources artifact-path workdir)
+                   "Copied resources to container"
+                   :info))
 
-              image (time-log (commit-container container-id conn) "Commited container image" :debug)
+              image (time-log (commit-container container-id conn)
+                              "Commited base container image" :info)
+              _     (delete-container container-id client)
 
               log-file (str "/tmp/nos-logs/" flow-id  "/" (name op-id) ".txt")
               _ (io/make-parents log-file)
-              results (do-commands! client cmds image workdir inline-logs? stdout? conn log-file)]
+
+              results (do-commands! client cmds image workdir inline-logs?
+                                    stdout? conn log-file)]
              (do
                (f/try-all [_ (when (and (not-empty artifacts)
                                         (not= :nos/error (first results)))
@@ -558,7 +568,7 @@
                                 artifact-path
                                 workdir))
                            _ (when (not= :nos/error (first results))
-                               (time-log (gc-images results conn) "Deleted images for flow" :debug))]
+                               (time-log (gc-images results conn) "Deleted images for flow" :info))]
                           results
                           (f/when-failed
                            [err]
