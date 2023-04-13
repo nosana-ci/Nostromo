@@ -213,18 +213,24 @@
       (with-open [rdr (io/reader log-stream)]
         (loop [r (BufferedReader. rdr)]
           (let [log-type (.read r)]
-            (when (> log-type -1)
-              (.skip r 3)
-              (let [buf (char-array 4)
-                    _ (.read r buf 0 4)
-                    bts (.getBytes (String. buf) (StandardCharsets/UTF_8))
-                    byte-buf (ByteBuffer/wrap bts)
-                    size (.getInt byte-buf)
-                    line-buf (char-array size)
-                    _ (.read r line-buf 0 size)
-                    line (String. line-buf)]
-                (reaction-fn line log-type))
-              (recur r))))))))
+            ;; TODO: what is this, continuation type or something?
+            (if (= log-type 97)
+              (do
+                (reaction-fn (.readLine r) log-type)
+                (recur r))
+              (when (> log-type -1)
+                (.skip r 3)
+
+                (let [buf (char-array 4)
+                      _ (.read r buf 0 4)
+                      bts (.getBytes (String. buf) (StandardCharsets/UTF_8))
+                      byte-buf (ByteBuffer/wrap bts)
+                      size (.getInt byte-buf)
+                      line-buf (char-array size)
+                      _ (.read r line-buf 0 size)
+                      line (String. line-buf)]
+                  (reaction-fn line log-type))
+                (recur r)))))))))
 
 (defn put-container-archive
   "Copies a tar input stream to a path in the container"
