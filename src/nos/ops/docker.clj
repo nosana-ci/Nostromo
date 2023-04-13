@@ -8,7 +8,7 @@
    [contajners.core :as c]
    [taoensso.timbre :as log]
    [clj-compress.core :refer [create-archive]])
-  (:import [java.io BufferedReader]
+  (:import [java.io BufferedReader ByteArrayOutputStream]
            [java.net URI]
            [java.nio ByteBuffer CharBuffer]
            [java.nio.file FileSystems PathMatcher Paths]
@@ -78,7 +78,7 @@
                               :version  api-version})
         images     (map :img (second res))
         containers (map :container (second res))]
-    (run! #(do (log/log :trace "Clean container " %)
+    (run! #(do (log/log :info "Clean container " %)
                (delete-container % con-client))
           containers)
     (run! #(do (log/log :trace "Clean image " %)
@@ -210,27 +210,28 @@
                                      :as :stream
                                      :throw-exceptions true})]
     (future
-      (with-open [rdr (io/reader log-stream)]
-        (loop [r (BufferedReader. rdr)]
-          (let [log-type (.read r)]
-            ;; TODO: what is this, continuation type or something?
-            (if (= log-type 97)
-              (do
-                (reaction-fn (.readLine r) log-type)
-                (recur r))
-              (when (> log-type -1)
-                (.skip r 3)
-
-                (let [buf (char-array 4)
-                      _ (.read r buf 0 4)
-                      bts (.getBytes (String. buf) (StandardCharsets/UTF_8))
-                      byte-buf (ByteBuffer/wrap bts)
-                      size (.getInt byte-buf)
-                      line-buf (char-array size)
-                      _ (.read r line-buf 0 size)
-                      line (String. line-buf)]
-                  (reaction-fn line log-type))
-                (recur r)))))))))
+      (with-open [r (io/input-stream log-stream)]
+        (doall
+         (loop []
+           (let [log-type (.read r)]
+             (when (> log-type -1)
+               (.skip r 3)
+               (let [buf (byte-array 4)
+                     _ (.read r buf 0 4)
+                     byte-buf (ByteBuffer/wrap buf)
+                     size (.getInt byte-buf)
+                     line-buf (byte-array size)
+                     ;; we have to make sure we read the full `size`
+                     ;; bytes from the InputStream. unfortunately
+                     ;; java's .read is not always reliable.
+                     _ (doall
+                        (loop [total-read 0]
+                          (let [did-read (.read r line-buf total-read (- size total-read))]
+                            (when (< (+ total-read did-read) size)
+                              (recur (+ total-read did-read))))))
+                     line (str (apply str (map char line-buf)))]
+                 (reaction-fn line log-type))
+               (recur)))))))))
 
 (defn put-container-archive
   "Copies a tar input stream to a path in the container"
