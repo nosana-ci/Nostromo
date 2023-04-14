@@ -543,7 +543,6 @@
                                 :throw-exceptions true
                                 :data
                                 (cond-> {:image image
-                                         :env   env}
                                          :command ["ls"]
                                          :env env}
                                   entrypoint (assoc :entrypoint entrypoint))})
