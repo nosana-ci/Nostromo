@@ -216,21 +216,23 @@
            (let [log-type (.read r)]
              (when (> log-type -1)
                (.skip r 3)
-               (let [buf (byte-array 4)
-                     _ (.read r buf 0 4)
-                     byte-buf (ByteBuffer/wrap buf)
-                     size (.getInt byte-buf)
-                     line-buf (byte-array size)
-                     ;; we have to make sure we read the full `size`
-                     ;; bytes from the InputStream. unfortunately
-                     ;; java's .read is not always reliable.
-                     _ (doall
-                        (loop [total-read 0]
-                          (let [did-read (.read r line-buf total-read (- size total-read))]
-                            (when (< (+ total-read did-read) size)
-                              (recur (+ total-read did-read))))))
-                     line (str (apply str (map char line-buf)))]
-                 (reaction-fn line log-type))
+               (try
+                 (let [buf (byte-array 4)
+                       _ (.read r buf 0 4)
+                       byte-buf (ByteBuffer/wrap buf)
+                       size (.getInt byte-buf)
+                       line-buf (byte-array size)
+                       ;; we have to make sure we read the full `size`
+                       ;; bytes from the InputStream. unfortunately
+                       ;; java's .read is not always reliable.
+                       _ (doall
+                          (loop [total-read 0]
+                            (let [did-read (.read r line-buf total-read (- size total-read))]
+                              (when (< (+ total-read did-read) size)
+                                (recur (+ total-read did-read))))))
+                       line (String. line-buf StandardCharsets/UTF_8)]
+                   (reaction-fn line log-type))
+                 (catch Exception e (prn e)))
                (recur)))))))))
 
 (defn put-container-archive
