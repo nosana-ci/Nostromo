@@ -128,10 +128,10 @@
 (defn gc-volumes!
   "Delete all volumes that were created in `flow` from Podman."
   [flow conn]
-  (let [client {:engine :podman
-                :category :libpod/volumes
-                :conn conn
-                :version api-version}]
+  (let [client (c/client {:engine :podman
+                          :category :libpod/volumes
+                          :conn conn
+                          :version api-version})]
     (when-let [vols (get-in flow [:state :nos/global :container/created-volumes])]
       (run! #(do (log/log :info "Pruning volume " %)
                  (delete-volume client %))
