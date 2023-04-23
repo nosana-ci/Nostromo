@@ -19,7 +19,7 @@
 
   failjure/failjure {:mvn/version "2.2.0"}
   middlesphere/clj-compress {:mvn/version "0.1.0"}
-  org.clojars.lispyclouds/contajners {:mvn/version "0.0.6"}
+  org.clojars.lispyclouds/contajners {:mvn/version "1.0.0"}
   clj-jgit/clj-jgit {:mvn/version "1.0.1" :exclusions [org.eclipse.jgit/org.eclipse.jgit.gpg.bc]}}
 
  :aliases {:dev {:extra-deps {integrant/repl {:mvn/version "0.3.1"}
