@@ -52,9 +52,9 @@
      :cljs (quot (.getTime (js/Date.)) 1000)))
 
 ;; graphs
-(defn ref [key] [::ref key])
-(defn ref? [key] (and (vector? key) (or (= (first key) ::ref)
-                                        (= (first key) ::dep))))
+(defn ref [key] [:nos/ref key])
+(defn ref? [key] (and (vector? key) (or (= (first key) :nos/ref)
+                                        (= (first key) :nos/dep))))
 
 (defn reflike? [key]
   (and (coll? key)
@@ -91,13 +91,17 @@
           :nos/coll
           :nos/pass)))))
 
-(defmethod ref-val :nos/ref [r state _] (get state (keyword (second r))))
+(defmethod ref-val :nos/ref [r state _]
+  (let [value (get state (keyword (second r)))]
+    (if (error? value)
+      (throw (Exception. (str "Ref has error " (second value))))
+      value)))
 (defmethod ref-val :nos/vault [r _ vault] (vault/get-secret vault (second r)))
 (defmethod ref-val :nos/dep [_ _ _] :nos/skip)
 ;; the ::str inline operator concatenates arguments as strings and is recursive
 (defmethod ref-val :nos/str [r state vault] (apply str (map #(ref-val % state vault) (rest r))))
 (defmethod ref-val :nos/pass [r _ _] r)
-(defmethod ref-val :nos/coll [r res vault] (map #(ref-val % res vault) r))
+(defmethod ref-val :nos/coll [r res vault] (mapv #(ref-val % res vault) r))
 (defmethod ref-val :nos/map [r res vault] (fmap* #(ref-val % res vault) r))
 (defmethod ref-val :nos/state [r state vault] state)
 
@@ -198,11 +202,12 @@
 
 (defmulti handle-fx #'handle-fx-dispatch)
 
-(derive :nos/fx-set ::fx)    ; seq of multiple effects
-(derive :nos/future ::fx)    ; resolved by a future delivery
-(derive :nos/flow ::fx)      ; merge a new flow into the current
-(derive :nos/rerun ::fx)     ; ignore op result and rerun on next execution
-(derive :nos/error ::fx)     ; base error handler
+(derive :nos/fx-set ::fx)     ; seq of multiple effects
+(derive :nos/future ::fx)     ; resolved by a future delivery
+(derive :nos/flow ::fx)       ; merge a new flow into the current
+(derive :nos/rerun ::fx)      ; ignore op result and rerun on next execution
+(derive :nos/error ::fx)      ; base error handler
+(derive :nos/set-global ::fx) ; set arbitrary state under :nos/global
 
 (defmethod handle-fx :nos/fx-set [fe op [_ & fxs] flow]
   (reduce #(handle-fx fe op %2 %1) flow fxs))
@@ -237,7 +242,7 @@
 ;; path, and if `allow-failure?` is false for both the flow and the op
 ;; finish the flow.
 (defmethod handle-fx :nos/error [_ op [_ msg :as res] flow]
-  (log :error "Exception in op " (:id op) msg)
+  (log :error "Exception in op" (:id op) msg)
   (let [allow-failure? (or (= true (:allow-failure? op))
                            (and (= true (:allow-failure? flow))
                                 (not (= false (:allow-failure? op)))))]
@@ -245,6 +250,9 @@
       true                 (assoc-in [:state (:id op)] res)
       (not allow-failure?) (assoc :status :failed
                                   :execution-path []))))
+
+(defmethod handle-fx :nos/set-global [_ op [_ k v] flow]
+  (assoc-in flow [:state :nos/global k] v))
 
 (defmethod handle-fx :default [_ op res flow]
   (assoc-in flow [:state (:id op)] res))

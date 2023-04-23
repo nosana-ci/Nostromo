@@ -21,6 +21,45 @@
 
 (def api-version "v4.0.0")
 
+(defn get-volumes []
+  (let [client (c/client {:engine :podman
+                          :category :libpod/volumes
+                          :conn {:uri "http://localhost:8080"}
+                          :version api-version})]
+    (c/invoke client {:op :VolumeListLibpod})))
+
+(defn create-volume
+  ([name]
+   (let [client (c/client {:engine :podman
+                           :category :libpod/volumes
+                           :conn {:uri "http://localhost:8080"}
+                           :version api-version})]
+     (create-volume client name)))
+  ([client name]
+   (c/invoke client {:op :VolumeCreateLibpod
+                     :data {:driver "local"
+                            :name name}})))
+
+(defn delete-volume
+  ([name]
+   (let [client (c/client {:engine :podman
+                           :category :libpod/volumes
+                           :conn {:uri "http://localhost:8080"}
+                           :version api-version})]
+     (delete-volume client name)))
+  ([client name]
+   (c/invoke client {:op :VolumeDeleteLibpod
+                     :params {:name name}})))
+
+(defn create-network []
+  (let [client (c/client {:engine :podman
+                          :category :libpod/networks
+                          :conn {:uri "http://localhost:8080"}
+                          :version "v4.0.0"})]
+    (c/invoke client {:op :NetworkCreateLibpod
+                      :data {:created "2019-08-24T14:15:22Z"
+                             :id "string"}})))
+
 (defmacro time-log
   "Evaluates expr and prints the time it took.  Returns the value of
  expr."
@@ -66,7 +105,8 @@
   id)
 
 (defn gc-images
-  "Garbage-collect images and containers of a flow."
+  "Garbage-collect images, containers, and volumes of a flow.
+  `res` are the results as returned by `do-commands!`."
   [res conn]
   (let [img-client (c/client {:engine   :podman
                               :category :libpod/images
@@ -84,6 +124,18 @@
     (run! #(do (log/log :trace "Clean image " %)
                (delete-image % img-client))
           images)))
+
+(defn gc-volumes!
+  "Delete all volumes that were created in `flow` from Podman."
+  [flow conn]
+  (let [client {:engine :podman
+                :category :libpod/volumes
+                :conn conn
+                :version api-version}]
+    (when-let [vols (get-in flow [:state :nos/global :container/created-volumes])]
+      (run! #(do (log/log :info "Pruning volume " %)
+                 (delete-volume client %))
+            vols))))
 
 (defn- relativise-path [base path]
   (let [f (io/file base)
@@ -181,7 +233,8 @@
                                 :category :libpod/commit
                                 :conn conn
                                 :version api-version})
-              params {:container container-id}
+              params {:container container-id
+                      :pause false}
               result (c/invoke client
                                {:op :ImageCommitLibpod
                                 :params params
@@ -403,7 +456,7 @@
   "Runs a command in a container from the `image`.
   Returns the result image and container-id as a tuple.
   `log-fn` is a function like #(prn \"CNT: \" %)"
-  [client cmd image workdir log-fn conn commit?]
+  [client cmd image workdir env log-fn volumes conn commit?]
   (f/try-all [result (c/invoke
                       client
                       {:op               :ContainerCreateLibpod
@@ -412,7 +465,8 @@
                        (cond->
                            {:image              image
                             :command            (sh-tokenize (:cmd cmd))
-                            :env                {}
+                            :env                env
+                            :volumes volumes
                             :work_dir           (or (:workdir cmd) workdir)
                             :create_working_dir true
                             :cgroups_mode       "disabled"}
@@ -450,7 +504,7 @@
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
-  [client commands image workdir inline-logs? stdout? conn op-log-path]
+  [client commands image workdir env inline-logs? stdout? volumes conn op-log-path]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
@@ -467,7 +521,7 @@
             (.write w "[")
             ;; (.write w-op (str "\u001b[32m" "$ " (:cmd cmd) "\033[0m" "\n"))
             (let [result
-                  (do-command! client cmd img workdir
+                  (do-command! client cmd img workdir env
                                #(do (.write w
                                             (str "[" %2 ","
                                                  (json/encode %1)
@@ -478,6 +532,7 @@
 
                                     (.write w-op %1)
                                     (.flush w-op))
+                               volumes
                                conn
                                (not-empty rst))]
               (.write w "[1,\"\"]]")
@@ -511,18 +566,34 @@
 ;; resources = copied from local disk to container before run
 ;; artifacts = copied from container to local disk after run
 
+(defmethod nos/run-op
+  :container/create-volume
+  [_op {:keys [state] :as _flow} {:keys [name]}]
+  (let [{:keys [container/created-volumes] :or {created-volumes []}} (:nos/global state)
+        client (c/client {:engine :podman
+                          :category :libpod/volumes
+                          :conn {:uri "http://localhost:8080"}
+                          :version api-version})
+        vol (create-volume client name)]
+
+    (if (= 500 (:response vol))
+      [:nos/error (:message vol)]
+      [:nos/fx-set
+       [:nos/set-global :container/created-volumes (conj created-volumes (:Name vol))]
+       (:Name vol)])))
 
 (defmethod nos/run-op
   :container/run
   [{op-id :id}
    {flow-id :id}
-   {:keys [image cmds conn artifacts resources workdir entrypoint env inline-logs? stdout?
-           artifact-path image-pull-secret]
+   {:keys [image cmds conn artifacts volumes resources workdir entrypoint env
+           inline-logs? stdout? artifact-path image-pull-secret]
     :or   {conn              {:uri "http://localhost:8080"}
            workdir           "/root"
            entrypoint        nil
            resources         []
            artifacts         []
+           volumes           []
            artifact-path     (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?      false
            stdout?           false
@@ -538,7 +609,7 @@
               _ (io/make-parents (str artifact-path "/ignored.txt"))
 
               result (c/invoke client
-                               {:op               :ContainerCreateLibpod
+                               {:op :ContainerCreateLibpod
                                 :throw-exceptions true
                                 :data
                                 (cond-> {:image image
@@ -548,22 +619,23 @@
 
               container-id (:Id result)
 
-              _ (when (not-empty resources)
-                  (time-log
-                   (copy-resources-to-container!
-                    client container-id resources artifact-path workdir)
-                   "Copied resources to container"
-                   :info))
+              image
+              (if (not-empty resources)
+                (do
+                  (time-log (copy-resources-to-container!
+                             client container-id resources artifact-path workdir)
+                            "Copied resources to container" :info)
+                  (time-log (commit-container container-id conn)
+                            "Commited base container image" :info))
+                image)
 
-              image (time-log (commit-container container-id conn)
-                              "Commited base container image" :info)
-              _     (delete-container container-id client)
+              _ (delete-container container-id client)
 
               log-file (str "/tmp/nos-logs/" flow-id  "/" (name op-id) ".txt")
               _ (io/make-parents log-file)
 
-              results (do-commands! client cmds image workdir inline-logs?
-                                    stdout? conn log-file)]
+              results (do-commands! client cmds image workdir env inline-logs?
+                                    stdout? volumes conn log-file)]
              (do
                (f/try-all [_ (when (and (not-empty artifacts)
                                         (not= :nos/error (first results)))
@@ -606,7 +678,66 @@
                    :id   :list
                    :args [{:cmds      [{:cmd "ls -l dummy"}]
                            :image     "ubuntu"
-                           :resources [{:name "dummy.tar" :dest "/root"}]}]}]})))
+                           :resources [{:name "dummy.tar" :dest "/root"}]}]}]}))
+
+  (run-flow
+   (flow/build  {:ops
+                 [{:op   :container/run
+                   :id   :list
+                   :args [{:cmds      [{:cmd "bash -c 'time dd if=/dev/zero of=/tmp/zz count=2M bs=1024'"}
+                                       {:cmd "bash -c 'ls -lh /tmp'"}
+                                       {:cmd "bash -c 'echo aaaaaaaaaaaaaa'"}]                           :stdout? true
+                           :image     "ubuntu"}]}]}))
+
+  (run-flow
+   (flow/build  {:ops
+                 [{:op   :container/run
+                   :id   :list
+                   :args [{:cmds      [{:cmd "git clone https://github.com/unraveled/dummy"}]
+                           :workdir   "/nixnix"
+                           :stdout? true
+                           :image "bitnami/git"}]}
+                  {:op   :container/run
+                   :id   :dear
+                   :args [{:cmds      [{:cmd "ls -lah"}]
+                           :workdir "/nixnix"
+                           :stdout? true
+                           :image "alpine"}]}]}))  )
+
+(comment
+  (run-flow
+   (flow/build
+    {:ops
+     [;; ==> Every step gets a fresh volume
+      {:op :container/create-volume
+       :id :myvol}
+      ;; ==> The pre-step downloads artifacts and code into the volume
+      {:op :container/run
+       :id :pre-step
+       :args {:env {"REPO" "https://github.com/unraveled/dummy"}
+              :cmds [{:cmd "sh -c 'git clone $REPO .'"}]
+              :workdir "/project"
+              :volumes [{:name (flow/ref :myvol) :dest "/project"}]
+              :image "bitnami/git"
+              :stdout? true :inline-logs? true}}
+      ;; ==> The actual step gets the
+      {:op :container/run
+       :id :step
+       :args {:cmds [{:cmd "ls -lah"}]
+              :deps [(flow/ref :pre-step)]
+              :workdir "/project"
+              :volumes [{:name (flow/ref :myvol) :dest "/project"}]
+
+              :image "alpine"}}
+      ;; ==> The post-step uploads artifacts
+      {:op :container/run
+       :id :post-step
+       :args {:cmds [{:cmd "ls -lah"}]
+              :deps [(flow/ref :step)]
+              :workdir "/project"
+              :volumes [{:name (flow/ref :myvol) :dest "/project"}]
+              :inline-logs? true :stdout? true
+              :image "alpine"}}]})))
 
 ;; To inspect OCI docs
 (comment
