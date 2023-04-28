@@ -456,7 +456,7 @@
   "Runs a command in a container from the `image`.
   Returns the result image and container-id as a tuple.
   `log-fn` is a function like #(prn \"CNT: \" %)"
-  [client cmd image workdir env log-fn volumes conn commit?]
+  [client cmd image entrypoint workdir env log-fn volumes conn commit?]
   (f/try-all [result (c/invoke
                       client
                       {:op               :ContainerCreateLibpod
@@ -470,8 +470,8 @@
                             :work_dir           (or (:workdir cmd) workdir)
                             :create_working_dir true
                             :cgroups_mode       "disabled"}
-                         (contains? cmd :entrypoint)
-                         (assoc :entrypoint (:entrypoint cmd)))})
+                         (or entrypoint (contains? cmd :entrypoint))
+                         (assoc (or entrypoint (:entrypoint cmd)) :entrypoint))})
 
               container-id (:Id result)
 
@@ -504,7 +504,7 @@
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
-  [client commands image workdir env inline-logs? stdout? volumes conn op-log-path]
+  [client commands image entrypoint workdir env inline-logs? stdout? volumes conn op-log-path]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
@@ -521,7 +521,7 @@
             (.write w "[")
             ;; (.write w-op (str "\u001b[32m" "$ " (:cmd cmd) "\033[0m" "\n"))
             (let [result
-                  (do-command! client cmd img workdir env
+                  (do-command! client cmd img entrypoint workdir env
                                #(do (.write w
                                             (str "[" %2 ","
                                                  (json/encode %1)
@@ -634,7 +634,7 @@
               log-file (str "/tmp/nos-logs/" flow-id  "/" (name op-id) ".txt")
               _ (io/make-parents log-file)
 
-              results (do-commands! client cmds image workdir env inline-logs?
+              results (do-commands! client cmds image entrypoint workdir env inline-logs?
                                     stdout? volumes conn log-file)]
              (do
                (f/try-all [_ (when (and (not-empty artifacts)
