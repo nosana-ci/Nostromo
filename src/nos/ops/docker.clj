@@ -504,7 +504,8 @@
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
-  [client commands image entrypoint workdir env inline-logs? stdout? volumes conn op-log-path]
+  [client commands image entrypoint workdir env
+   inline-logs? stdout? volumes conn op-log-path start-time]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
@@ -542,7 +543,8 @@
            [:nos/error
             (get-error-message command-results)
             (conj results {:error (f/message command-results)
-                           :time  (nos/current-time)
+                           :start-time start-time
+                           :end-time  (nos/current-time)
                            :cmd   cmd
                            :log   (cond-> log-path
                                     inline-logs? (-> slurp json/decode))})])
@@ -553,7 +555,8 @@
                 {:img       image
                  :status    status
                  :container container
-                 :time      (nos/current-time)
+                 :start-time start-time
+                 :end-time  (nos/current-time)
                  :cmd       cmd
                  :log       (cond-> log-path
                               inline-logs? (-> slurp json/decode))})]
@@ -598,7 +601,9 @@
            inline-logs?      false
            stdout?           false
            image-pull-secret nil}}]
-  (f/try-all [_ (log/tracef "Trying to pull %s... " image)
+  (f/try-all [start-time (nos/current-time)
+
+              _ (log/tracef "Trying to pull %s... " image)
               _ (docker-pull conn image image-pull-secret)
 
               client (c/client {:engine   :podman
@@ -635,7 +640,7 @@
               _ (io/make-parents log-file)
 
               results (do-commands! client cmds image entrypoint workdir env inline-logs?
-                                    stdout? volumes conn log-file)]
+                                    stdout? volumes conn log-file start-time)]
              (do
                (f/try-all [_ (when (and (not-empty artifacts)
                                         (not= :nos/error (first results)))
