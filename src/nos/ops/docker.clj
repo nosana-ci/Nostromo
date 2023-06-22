@@ -619,6 +619,7 @@
                                 :data
                                 (cond-> {:image image
                                          :command ["ls"]
+                                         :volumes volumes
                                          :env env}
                                   entrypoint (assoc :entrypoint entrypoint))})
 
