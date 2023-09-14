@@ -116,8 +116,10 @@
                               :category :libpod/containers
                               :conn     conn
                               :version  api-version})
-        images     (map :img (second res))
-        containers (map :container (second res))]
+        ;; NOTE: we do not GC the first image here as it's often the
+        ;; base image. this can probably be done better
+        images     (map :img (rest (second res)))
+        containers (map :container (rest (second res)))]
     (run! #(do (log/log :info "Clean container " %)
                (delete-container % con-client))
           containers)
@@ -603,8 +605,10 @@
            image-pull-secret nil}}]
   (f/try-all [start-time (nos/current-time)
 
-              _ (log/tracef "Trying to pull %s... " image)
-              _ (docker-pull conn image image-pull-secret)
+              _ (time-log
+                 (docker-pull conn image image-pull-secret)
+                 (str "Trying to pull  image")
+                 :info)
 
               client (c/client {:engine   :podman
                                 :category :libpod/containers
