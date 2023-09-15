@@ -20,7 +20,7 @@
   ([fe flow-id]
    (process-event! fe flow-id [nil nil]))
 
-  ([{:nos/keys [vault store log-dir] :as fe} flow-id [op result]]
+  ([{:nos/keys [vault store log-dir flow-chan] :as fe} flow-id [op result]]
    (log :info "Starting flow " flow-id)
 
    (let [log-file-name (get-log-filename log-dir flow-id)
@@ -30,11 +30,14 @@
        (let [flow (<!! (nos/load-flow flow-id store))]
          (binding [*out* log-file]
            (prn "Starting flow " flow-id)
-           (as-> flow f
-             (if op (assoc-in f [:results op] result) f)
-             (nos/run-flow! fe f)
-             (kv/assoc store flow-id f)
-             (<!! f))))))))
+           (let [final-flow
+                 (as-> flow f
+                   (if op (assoc-in f [:results op] result) f)
+                   (nos/run-flow! fe f))]
+             (go
+               (when (nos/finished? final-flow)
+                 (>! flow-chan [:finished flow-id final-flow]))
+               (<! (kv/assoc store flow-id final-flow))))))))))
 
 (defn use-nostromo
   [{:nos/keys [store vault] :as system}]
@@ -43,19 +46,19 @@
                       (assoc :nos/flow-chan flow-chan)
                       (update :system/stop conj #(a/close! flow-chan)))
         fe        (select-keys system [:nos/vault :nos/store :nos/flow-chan :nos/log-dir])]
-    (println "Starting flow engine loop...")
+    (log :info "Starting flow engine loop...")
     (go-loop []
       (when-let [[event & data :as m] (<! flow-chan)]
         (log :info "Received message " m)
         (case event
           :trigger
-          (try (process-event! fe (first data))
+          (try (<! (process-event! fe (first data)))
                (catch Exception e
                  (log :error "Failed to process event" e)))
           :deliver
           (if-let [[flow-id op] (<! (kv/get-in store [(first data) :deliver]))]
             (do (log :info "Deliver future" (first data))
-                (process-event! system flow-id [op (second data)]))
+                (<! (process-event! system flow-id [op (second data)])))
             (log :warn "Future not registered" (first data)))
           :fx
           (let [[flow-id op fxs] data
@@ -64,6 +67,7 @@
             (->> flow
                  (nos/handle-fx fe op fxs)
                  (kv/assoc store flow-id)
-                 <!)))
+                 <!))
+          nil)
         (recur)))
     system))
