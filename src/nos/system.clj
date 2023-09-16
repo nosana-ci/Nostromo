@@ -42,13 +42,17 @@
 (defn use-nostromo
   [{:nos/keys [store vault] :as system}]
   (let [flow-chan (chan 2000)
+        flow-chan-mult (a/mult flow-chan)
+        flow-chan-tap (chan 2000)
         system    (-> system
                       (assoc :nos/flow-chan flow-chan)
+                      (assoc :nos/flow-chan-mult flow-chan-mult)
                       (update :system/stop conj #(a/close! flow-chan)))
         fe        (select-keys system [:nos/vault :nos/store :nos/flow-chan :nos/log-dir])]
+    (a/tap flow-chan-mult flow-chan-tap)
     (log :info "Starting flow engine loop...")
     (go-loop []
-      (when-let [[event & data :as m] (<! flow-chan)]
+      (when-let [[event & data :as m] (<! flow-chan-tap)]
         (log :info "Received message " m)
         (case event
           :trigger
