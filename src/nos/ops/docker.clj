@@ -458,7 +458,7 @@
   "Runs a command in a container from the `image`.
   Returns the result image and container-id as a tuple.
   `log-fn` is a function like #(prn \"CNT: \" %)"
-  [client cmd image entrypoint workdir env log-fn volumes conn commit?]
+  [client cmd image entrypoint workdir env log-fn volumes devices conn commit?]
   (f/try-all [result (c/invoke
                       client
                       {:op               :ContainerCreateLibpod
@@ -469,6 +469,7 @@
                             :command            (sh-tokenize (:cmd cmd))
                             :env                env
                             :volumes volumes
+                            :devices devices
                             :work_dir           (or (:workdir cmd) workdir)
                             :create_working_dir true
                             :cgroups_mode       "disabled"}
@@ -507,7 +508,7 @@
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
   [client commands image entrypoint workdir env
-   inline-logs? stdout? volumes conn op-log-path start-time]
+   inline-logs? stdout? volumes devices conn op-log-path start-time]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
@@ -536,6 +537,7 @@
                                     (.write w-op %1)
                                     (.flush w-op))
                                volumes
+                               devices
                                conn
                                (not-empty rst))]
               (.write w "[1,\"\"]]")
@@ -592,13 +594,14 @@
   [{op-id :id}
    {flow-id :id}
    {:keys [image cmds conn artifacts volumes resources workdir entrypoint env
-           inline-logs? stdout? artifact-path image-pull-secret]
+           inline-logs? stdout? artifact-path image-pull-secret devices]
     :or   {conn              {:uri "http://localhost:8080"}
            workdir           "/root"
            entrypoint        nil
            resources         []
            artifacts         []
            volumes           []
+           devices           []
            artifact-path     (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?      false
            stdout?           false
@@ -618,12 +621,13 @@
               _ (io/make-parents (str artifact-path "/ignored.txt"))
 
               result (c/invoke client
-                               {:op :ContainerCreateLibpod
+                               {:op               :ContainerCreateLibpod
                                 :throw-exceptions true
                                 :data
                                 (cond-> {:image image
                                          :command ["ls"]
                                          :volumes volumes
+                                         :devices devices
                                          :env env}
                                   entrypoint (assoc :entrypoint entrypoint))})
 
@@ -645,7 +649,7 @@
               _ (io/make-parents log-file)
 
               results (do-commands! client cmds image entrypoint workdir env inline-logs?
-                                    stdout? volumes conn log-file start-time)]
+                                    stdout? volumes devices conn log-file start-time)]
              (do
                (f/try-all [_ (when (and (not-empty artifacts)
                                         (not= :nos/error (first results)))
