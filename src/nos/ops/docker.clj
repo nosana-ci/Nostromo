@@ -470,11 +470,12 @@
                             :env                env
                             :volumes volumes
                             :devices devices
-                            :work_dir           (or (:workdir cmd) workdir)
                             :create_working_dir true
                             :cgroups_mode       "disabled"}
+                         (or (:workdir cmd) workdir)
+                         (assoc :work_dir (or (:workdir cmd) workdir))
                          (or entrypoint (contains? cmd :entrypoint))
-                         (assoc (or entrypoint (:entrypoint cmd)) :entrypoint))})
+                         (assoc :entrypoint (or entrypoint (:entrypoint cmd))))})
 
               container-id (:Id result)
 
@@ -596,7 +597,6 @@
    {:keys [image cmds conn artifacts volumes resources workdir entrypoint env
            inline-logs? stdout? artifact-path image-pull-secret devices]
     :or   {conn              {:uri "http://localhost:8080"}
-           workdir           "/root"
            entrypoint        nil
            resources         []
            artifacts         []
