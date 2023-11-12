@@ -458,20 +458,21 @@
   "Runs a command in a container from the `image`.
   Returns the result image and container-id as a tuple.
   `log-fn` is a function like #(prn \"CNT: \" %)"
-  [client cmd image entrypoint workdir env log-fn volumes devices conn commit?]
+  [client cmd image entrypoint workdir env log-fn volumes devices ports conn commit?]
   (f/try-all [result (c/invoke
                       client
-                      {:op               :ContainerCreateLibpod
+                      {:op :ContainerCreateLibpod
                        :throw-exceptions true
                        :data
                        (cond->
-                           {:image              image
-                            :command            (sh-tokenize (:cmd cmd))
-                            :env                env
+                           {:image image
+                            :command (sh-tokenize (:cmd cmd))
+                            :env env
                             :volumes volumes
                             :devices devices
+                            :portmappings ports
                             :create_working_dir true
-                            :cgroups_mode       "disabled"}
+                            :cgroups_mode "disabled"}
                          (or (:workdir cmd) workdir)
                          (assoc :work_dir (or (:workdir cmd) workdir))
                          (or entrypoint (contains? cmd :entrypoint))
@@ -508,8 +509,8 @@
 (defn do-commands!
   "Runs an sequence of `commands` starting from `image`.
   Returns a vector of the results of each command."
-  [client commands image entrypoint workdir env
-   inline-logs? stdout? volumes devices conn op-log-path start-time]
+  [client commands image entrypoint workdir env inline-logs? stdout?
+   volumes devices conn op-log-path start-time ports]
   (loop [cmds    commands
          results [{:img image :cmd nil :time (nos/current-time) :log nil}]]
     (let [[cmd & rst] cmds
@@ -539,6 +540,7 @@
                                     (.flush w-op))
                                volumes
                                devices
+                               ports
                                conn
                                (not-empty rst))]
               (.write w "[1,\"\"]]")
@@ -595,7 +597,7 @@
   [{op-id :id}
    {flow-id :id}
    {:keys [image cmds conn artifacts volumes resources workdir entrypoint env
-           inline-logs? stdout? artifact-path image-pull-secret devices]
+           inline-logs? stdout? artifact-path image-pull-secret devices portmappings]
     :or   {conn              {:uri "http://localhost:8080"}
            entrypoint        nil
            resources         []
@@ -605,7 +607,8 @@
            artifact-path     (str "/tmp/nos-artifacts/" flow-id)
            inline-logs?      false
            stdout?           false
-           image-pull-secret nil}}]
+           image-pull-secret nil
+           portmappings      nil}}]
   (f/try-all [start-time (nos/current-time)
 
               _ (time-log
@@ -649,7 +652,7 @@
               _ (io/make-parents log-file)
 
               results (do-commands! client cmds image entrypoint workdir env inline-logs?
-                                    stdout? volumes devices conn log-file start-time)]
+                                    stdout? volumes devices conn log-file start-time portmappings)]
              (do
                (f/try-all [_ (when (and (not-empty artifacts)
                                         (not= :nos/error (first results)))
@@ -752,6 +755,19 @@
               :volumes [{:name (flow/ref :myvol) :dest "/project"}]
               :inline-logs? true :stdout? true
               :image "alpine"}}]})))
+
+;; Runs an NGINX container and exposes it on port 8081
+(comment
+  (run-flow
+   (flow/build
+    {:ops
+     [{:op :container/run
+       :id :step
+       :args {:cmds [{:cmd "nginx -g 'daemon off;'"}]
+              :workdir "/project"
+              :inline-logs? false :stdout? true
+              :ports [{:container_port 80 :host_port 8081}]
+              :image "nginx"}}]})))
 
 ;; To inspect OCI docs
 (comment
