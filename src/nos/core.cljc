@@ -5,7 +5,6 @@
    [clojure.edn :as edn]
    [clojure.core.async :as a :refer [>! <! >!! <!! go go-loop chan put!]]
    [clojure.string :as str]
-   [konserve.filestore :refer [connect-fs-store]]
    [konserve.core :as kv]
    [clojure.java.io :as io]
    [nano-id.core :refer [nano-id]]
@@ -13,8 +12,7 @@
    [nos.vault :as vault]
    [nos.store :refer [log-prepend]]
    [cheshire.core :as json]
-   [clojure.java.shell :refer [sh]]
-   [weavejester.dependency :as dep]))
+   [clojure.java.shell :refer [sh]]))
 
 ;; specs
 (s/def ::single-kw qualified-keyword?)
