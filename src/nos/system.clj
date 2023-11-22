@@ -50,7 +50,7 @@
                       (update :system/stop conj #(a/close! flow-chan)))
         fe        (select-keys system [:nos/vault :nos/store :nos/flow-chan :nos/log-dir])]
     (a/tap flow-chan-mult flow-chan-tap)
-    (log :info "Starting flow engine loop...")
+    (log :debug "Starting flow engine loop...")
     (go-loop []
       (when-let [[event & data :as m] (<! flow-chan-tap)]
         (log :info "Received message " m)
