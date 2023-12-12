@@ -578,11 +578,14 @@
 
 (defmethod nos/run-op
   :container/create-volume
-  [_op {:keys [state] :as _flow} {:keys [name]}]
+  [_op
+   {:keys [state] :as _flow}
+   {:keys [name conn]
+    :or {conn {:uri "http://localhost:8080"}}}]
   (let [{:keys [container/created-volumes] :or {created-volumes []}} (:nos/global state)
         client (c/client {:engine :podman
                           :category :libpod/volumes
-                          :conn {:uri "http://localhost:8080"}
+                          :conn conn
                           :version api-version})
         vol (create-volume client name)]
 
