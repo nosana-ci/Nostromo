@@ -321,5 +321,5 @@
                                     args
                                       (execute-op op args f))
                          new-flow (handle-fx fe op res f)]
-                     (go (<! (kv/assoc store id new-flow)))
+                     (<!! (kv/assoc store id new-flow))
                      (recur new-flow))))))))))))
