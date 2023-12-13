@@ -21,10 +21,10 @@
    (process-event! fe flow-id [nil nil]))
 
   ([{:nos/keys [vault store log-dir flow-chan] :as fe} flow-id [op result]]
-   (log :info "Starting flow " flow-id)
+   (log :debug "Starting flow " flow-id)
 
    (let [log-file-name (get-log-filename log-dir flow-id)
-         _             (log :info "Log file name is " log-file-name)
+         _             (log :debug "Log file name is " log-file-name)
          _             (io/make-parents log-file-name)]
      (with-open [log-file (io/writer log-file-name :append true)]
        (let [flow (<!! (nos/load-flow flow-id store))]
@@ -53,7 +53,7 @@
     (log :debug "Starting flow engine loop...")
     (go-loop []
       (when-let [[event & data :as m] (<! flow-chan-tap)]
-        (log :info "Received message " m)
+        (log :debug "Received message " m)
         (case event
           :trigger
           (try (<! (process-event! fe (first data)))
@@ -67,7 +67,7 @@
           :fx
           (let [[flow-id op fxs] data
                 flow             (<! (nos/load-flow flow-id store))]
-            (log :info "Process fx" fxs)
+            (log :debug "Process fx" fxs)
             (->> flow
                  (nos/handle-fx fe op fxs)
                  (kv/assoc store flow-id)

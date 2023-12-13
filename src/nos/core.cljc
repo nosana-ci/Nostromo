@@ -240,7 +240,7 @@
 ;; path, and if `allow-failure?` is false for both the flow and the op
 ;; finish the flow.
 (defmethod handle-fx :nos/error [_ op [_ msg :as res] flow]
-  (log :error "Exception in op" (:id op) msg)
+  (log :debug "Exception in op" (:id op) msg)
   (let [allow-failure? (or (= true (:allow-failure? op))
                            (and (= true (:allow-failure? flow))
                                 (not (= false (:allow-failure? op)))))]
